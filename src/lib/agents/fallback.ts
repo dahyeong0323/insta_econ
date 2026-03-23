@@ -317,7 +317,7 @@ export function buildFallbackProject(bundle: SourceBundle): CarouselProject {
   ];
 
   return withStandaloneHtml({
-    brand_label: "ECON CAROUSEL",
+    brand_label: "보리의 10대를 위한 경제",
     project_title: title,
     audience: "middle_school",
     language: "ko",

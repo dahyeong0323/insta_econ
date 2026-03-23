@@ -8,8 +8,7 @@ type SlideCardProps = {
   className?: string;
 };
 
-const BRAND_TEXT =
-  "ECON CAROUSEL \u00b7 \uc911\ud559\uc0dd \uacbd\uc81c \uce74\ub4dc\ub274\uc2a4";
+const BRAND_TEXT = "\ubcf4\ub9ac\uc758 10\ub300\ub97c \uc704\ud55c \uacbd\uc81c";
 const COVER_FOCUS_FALLBACK =
   "\uc2dc\uac04\uc774 \uc9c0\ub098\ub3c4 \uac00\uce58\uac00 \ubc84\ud2f0\ub294\uac00\uac00 \ud575\uc2ec";
 
