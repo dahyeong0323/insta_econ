@@ -33,10 +33,14 @@ export function contentMarketerInstructions() {
 Goals:
 - Turn the source bundle into exactly 8 Korean Instagram carousel slides.
 - Use a question-led educational style with strong editorial clarity.
+- Build each deck around one economic term or one sharply defined concept.
+- Prefer posts like "주식이 뭐야?", "환율이 오른다?", "이자는 왜 붙어?" over broad explainers like "경제는 왜..." unless the term itself is named clearly.
 - Each slide should teach one thing clearly.
 - The audience is Korean middle-school students, so simplify aggressively while keeping facts intact.
 - Never invent facts, statistics, or source quotes.
 - Keep slides save-worthy, punchy, and mobile-readable.
+- Make slide 1 feel like a real student question, misunderstanding, or "헷갈렸던 말" moment.
+- Reuse one sticky everyday analogy or metaphor across the deck when it helps.
 - Body copy on slides 2-7 should usually feel like 3-5 short lines, not a dense paragraph and not a one-line stub.
 - State grounded information directly.
 - Do not use visible phrases like:
@@ -74,7 +78,7 @@ Preferred lower module patterns:
 - stacked colored role strips
 - before/after comparison with a bottom orange banner
 - white checklist validation table
-- milestone timeline with colored cards
+- milestone timeline with balanced spacing
 - three large colored summary cards
 - orange message block with soft circular highlights
 
@@ -83,8 +87,15 @@ Role-to-layout locking:
 - why slides should usually use a before/after or cause-result comparison
 - example slides should usually use a timeline or historical flow
 - compare slides should usually use 3 large comparison cards
-- number_or_steps slides should use either a true number spotlight or a dark process/code panel
+- number_or_steps slides should use a true number spotlight only when the number itself is the hook and visually surprising
+- number_or_steps slides should otherwise use a readable checklist/process panel instead of one oversized single box
 - recap slides should end with a dense summary block, not a tiny footer card
+
+Visual QA priorities:
+- timeline layouts must feel symmetrical and centered
+- avoid duplicating the same information in both a top timeline and another dense card block below
+- checklist tables need strong step-number hierarchy and a readable right column
+- avoid oversized single-box spotlight modules for weak numbers like time limits, generic counts, or filler labels
 
 Do not output internal production notes, UI labels, or art-direction comments for the reader.
 Do not write things like:
@@ -114,9 +125,13 @@ Goals:
 - Fix local design QA problems when they appear:
   - crowded checklist rows
   - timeline labels that are too long
+  - asymmetrical timeline spacing
+  - duplicated timeline information
+  - weak step-number hierarchy in checklist tables
   - code-window panels that push into the bottom safe area
   - card modules with too much text for their boxes
 - If a number slide lacks context, add a short label and explanation.
+- Avoid oversized single-box spotlight modules unless the number itself is genuinely the main hook.
 - If a closing slide is too long, compress the body and move the final memorable line into save_point.
 - Never invent facts or numbers.
 - Preserve grounding in the provided source bundle.
@@ -127,6 +142,15 @@ export function contentInput(bundle: SourceBundle, title?: string | null) {
   return `Create an 8-slide Korean economics card-news deck.
 
 Optional user title: ${title || "none"}
+
+Story architecture requirements:
+- The whole deck should explain one economic term or one tightly bounded concept.
+- Slide 1: a student-style hook question or misunderstanding.
+- Slide 2: what this term means in one clean definition.
+- Slide 3: one sticky analogy from school, allowance, snacks, shopping, games, or family life.
+- Slide 4-6: what it looks like in everyday life, why people say this word, and one common mistake.
+- Slide 7: the key distinction or "don't confuse it with this" point.
+- Slide 8: one memorable takeaway worth saving.
 
 Source bundle:
 ${JSON.stringify(bundle, null, 2)}

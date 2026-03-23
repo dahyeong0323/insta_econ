@@ -358,20 +358,22 @@ function ChecklistTableModule({ module }: { module: SlideModule }) {
         {module.items.map((item, index) => (
           <div
             key={`${item.label}-${item.title}-${index}`}
-            className="grid min-h-[94px] grid-cols-[64px_minmax(0,1fr)_minmax(220px,auto)] items-center gap-5 border-b border-zinc-100 py-5 last:border-b-0"
+            className="grid min-h-[104px] grid-cols-[76px_minmax(0,1.1fr)_minmax(250px,0.95fr)] items-center gap-6 border-b border-zinc-100 py-5 last:border-b-0"
           >
-            <div className="flex h-12 w-12 items-center justify-center self-start rounded-full bg-[#ff8a57] text-[16px] font-black text-white">
+            <div className="flex h-14 w-14 items-center justify-center self-start rounded-full bg-[#ff8a57] text-[20px] font-black text-white">
               {String(index + 1).padStart(2, "0")}
             </div>
             <div className="min-w-0">
-              <div className="text-[12px] font-black uppercase tracking-[0.08em] text-[#b0acb5]">
-                {item.label}
-              </div>
-              <div className="mt-1 whitespace-pre-line text-[18px] font-black tracking-[-0.03em] text-[#202024]">
+              {/^\d+$/u.test(item.label.trim()) ? null : (
+                <div className="text-[13px] font-black uppercase tracking-[0.08em] text-[#8e8895]">
+                  {item.label}
+                </div>
+              )}
+              <div className="mt-1 whitespace-pre-line text-[20px] font-black tracking-[-0.03em] text-[#202024]">
                 {item.title}
               </div>
             </div>
-            <div className="whitespace-pre-line text-right text-[18px] font-medium leading-7 text-zinc-400">
+            <div className="whitespace-pre-line text-right text-[20px] font-semibold leading-8 text-[#6f6974]">
               {item.value}
             </div>
           </div>
@@ -383,12 +385,17 @@ function ChecklistTableModule({ module }: { module: SlideModule }) {
 
 function TimelineModule({ module }: { module: SlideModule }) {
   const topItems = module.items.slice(0, 4);
+  const columnCount = Math.max(topItems.length, 3);
+  const edgeInset = `${50 / columnCount}%`;
 
   return (
     <div className="flex h-full flex-col justify-end space-y-4">
       <div className="rounded-[32px] bg-white px-7 py-5 shadow-[0_24px_50px_rgba(34,29,27,0.10)]">
-        <div className="relative grid grid-cols-4 gap-5">
-          <div className="absolute left-[12%] right-[12%] top-7 h-[3px] bg-[#dfdde3]" />
+        <div
+          className="relative grid gap-5"
+          style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+        >
+          <div className="absolute top-7 h-[3px] bg-[#dfdde3]" style={{ left: edgeInset, right: edgeInset }} />
           {topItems.map((item, index) => (
             <div key={`${item.label}-${item.title}-${index}`} className="relative text-center">
               <div
@@ -409,12 +416,9 @@ function TimelineModule({ module }: { module: SlideModule }) {
           ))}
         </div>
       </div>
-
-        <CardGrid
-          module={module}
-          colsClass={module.items.length > 3 ? "grid-cols-2" : "grid-cols-3"}
-          minHeight={module.items.length > 3 ? "min-h-[164px]" : "min-h-[204px]"}
-        />
+      {module.footer ? (
+        <div className="text-center text-[15px] font-bold leading-7 text-zinc-400">{module.footer}</div>
+      ) : null}
       </div>
   );
 }

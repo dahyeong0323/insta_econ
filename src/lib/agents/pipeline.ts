@@ -278,7 +278,7 @@ function sanitizeModule(module: RawSlide["module"]) {
   };
 }
 
-function slideHasNumericSignal(slide: RawSlide) {
+function hasStrongNumericHook(slide: RawSlide) {
   const probe = [
     slide.headline,
     slide.body,
@@ -297,7 +297,68 @@ function slideHasNumericSignal(slide: RawSlide) {
     .filter(Boolean)
     .join(" ");
 
-  return /\d/.test(probe);
+  if (!/\d/.test(probe)) {
+    return false;
+  }
+
+  if (/(24시간|하루의 시간|정해진 시간|하루는 누구에게나|한 가지를 먼저|1단계|2단계|3단계)/u.test(probe)) {
+    return false;
+  }
+
+  return /(%|퍼센트|원|만원|달러|배|명|주가|환율|이자|금리|가격)/u.test(probe);
+}
+
+function hasNumericOnlyChecklistLabels(slide: RawSlide | Slide) {
+  return (
+    slide.module.type === "checklist-table" &&
+    slide.module.items.some((item) => /^\d+$/u.test(item.label.trim()))
+  );
+}
+
+function hasWeakNumberSpotlight(slide: RawSlide | Slide) {
+  if (slide.module.type !== "number-spotlight") {
+    return false;
+  }
+
+  const probe = [
+    slide.headline,
+    slide.body,
+    slide.module.title,
+    slide.module.items[0]?.label,
+    slide.module.items[0]?.title,
+    slide.module.items[0]?.value,
+    slide.module.footer,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (!/\d/.test(probe)) {
+    return true;
+  }
+
+  if (/(24시간|하루의 시간|정해진 시간|하루는 누구에게나)/u.test(probe)) {
+    return true;
+  }
+
+  return !/(%|퍼센트|원|만원|달러|배|명|주가|환율|이자|금리|가격)/u.test(probe);
+}
+
+function hasTimelineAlignmentRisk(slide: RawSlide | Slide) {
+  if (slide.module.type !== "timeline") {
+    return false;
+  }
+
+  if (slide.module.items.length < 3 || slide.module.items.length > 4) {
+    return true;
+  }
+
+  const lengths = slide.module.items.map(
+    (item) => textLength(item.title) + textLength(item.value),
+  );
+  const max = Math.max(...lengths);
+  const min = Math.min(...lengths);
+
+  return min > 0 && max / min > 2.2;
 }
 
 function coerceModuleForRole(slide: RawSlide): RawSlide {
@@ -321,7 +382,7 @@ function coerceModuleForRole(slide: RawSlide): RawSlide {
       nextType = slide.module.items.length >= 3 ? "three-card-summary" : "before-after";
       break;
     case "number_or_steps":
-      nextType = slideHasNumericSignal(slide) ? "number-spotlight" : "code-window";
+      nextType = hasStrongNumericHook(slide) ? "number-spotlight" : "checklist-table";
       break;
     case "recap":
       nextType = slide.module.items.length <= 1 ? "message-banner" : "three-card-summary";
@@ -552,7 +613,11 @@ function heuristicRepairSlide(slide: Slide, bundle: SourceBundle) {
       footer: next.module.footer ? shortenText(next.module.footer, 1, 78) : null,
       items: next.module.items.slice(0, 4).map((item, index) => ({
         ...item,
-        label: shortenText(item.label || `Point ${index + 1}`, 1, 12),
+        label: shortenText(
+          /^\d+$/u.test((item.label || "").trim()) ? `포인트 ${index + 1}` : item.label || `포인트 ${index + 1}`,
+          1,
+          12,
+        ),
         title: shortenText(item.title, 1, 24),
         value: shortenText(item.value, 1, 40),
         note: item.note ? shortenText(item.note, 1, 44) : null,
@@ -642,6 +707,14 @@ function heuristicRepairSlide(slide: Slide, bundle: SourceBundle) {
 
   next = normalizeNumberModule(next);
   next = coerceModuleForRole(next);
+
+  if (hasWeakNumberSpotlight(next)) {
+    next.module = {
+      ...next.module,
+      type: "checklist-table",
+    };
+    next = coerceModuleForRole(next);
+  }
 
   if (isVisuallyCrowded(next)) {
     next.body = shortenText(next.body, 2, 180);
@@ -979,7 +1052,7 @@ export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport 
       (slide.role === "compare" &&
         !["three-card-summary", "before-after"].includes(slide.module.type)) ||
       (slide.role === "number_or_steps" &&
-        !["number-spotlight", "code-window"].includes(slide.module.type)) ||
+        !["number-spotlight", "code-window", "checklist-table"].includes(slide.module.type)) ||
       (slide.role === "recap" &&
         !["message-banner", "three-card-summary"].includes(slide.module.type))
     ) {
@@ -1030,6 +1103,14 @@ export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport 
         severity: "medium",
         stage: "qa-reviewer",
         message: `${slide.slide_number}번 숫자 카드는 숫자가 무엇을 뜻하는지 라벨이 더 필요해요.`,
+      });
+    }
+
+    if (hasWeakNumberSpotlight(slide)) {
+      issues.push({
+        severity: "high",
+        stage: "qa-reviewer",
+        message: `${slide.slide_number}번 슬라이드 숫자 spotlight가 약해서 한 박스 과장이 생겼어요.`,
       });
     }
 
@@ -1090,11 +1171,27 @@ export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport 
       });
     }
 
+    if (hasNumericOnlyChecklistLabels(slide)) {
+      issues.push({
+        severity: "medium",
+        stage: "qa-reviewer",
+        message: `${slide.slide_number}번 슬라이드 표에 숫자 라벨이 중복되어 위계가 약해 보여요.`,
+      });
+    }
+
     if (hasDenseTimeline(slide)) {
       issues.push({
         severity: "medium",
         stage: "qa-reviewer",
         message: `${slide.slide_number}번 슬라이드 타임라인 문구가 길어서 중앙 정렬이 무너질 수 있어요.`,
+      });
+    }
+
+    if (hasTimelineAlignmentRisk(slide)) {
+      issues.push({
+        severity: "high",
+        stage: "qa-reviewer",
+        message: `${slide.slide_number}번 슬라이드 타임라인 정렬이 비대칭으로 보일 위험이 있어요.`,
       });
     }
 

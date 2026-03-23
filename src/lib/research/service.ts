@@ -93,6 +93,14 @@ type ResearchSelection = {
   diagnostics: ResearchSelectionDiagnostic[];
 };
 
+type TopicCreativeGuide = {
+  contentMode: "term" | "system";
+  hookQuestion: string;
+  analogySeed: string;
+  studentScenario: string;
+  oneLineDefinition: string;
+};
+
 type ResearchHistoryContext = {
   recentPublished: Array<{
     runId: string;
@@ -128,6 +136,79 @@ type ActiveRunSummary = Pick<
 >;
 
 const activeRunStaleAfterMs = 6 * 60 * 60 * 1000;
+
+const topicCreativeGuides: Partial<Record<string, TopicCreativeGuide>> = {
+  scarcity: {
+    contentMode: "system",
+    hookQuestion: "왜 갖고 싶은 건 많은데 다 가질 수는 없을까?",
+    analogySeed: "희소성은 한정판 좌석처럼 자리가 모자란 상태다.",
+    studentScenario: "용돈, 시간표, 매점 고르기처럼 항상 다 챙길 수 없는 순간",
+    oneLineDefinition: "희소성은 원하는 것보다 쓸 수 있는 자원이 적은 상태다.",
+  },
+  "opportunity-cost": {
+    contentMode: "system",
+    hookQuestion: "하나를 고르면 왜 다른 하나를 놓치게 될까?",
+    analogySeed: "기회비용은 못 고른 메뉴의 그림자 가격이다.",
+    studentScenario: "학원 대신 운동, 간식 대신 교통비를 고를 때",
+    oneLineDefinition: "기회비용은 선택 때문에 포기한 다른 기회의 가치다.",
+  },
+  "consumer-choice-and-budget": {
+    contentMode: "system",
+    hookQuestion: "용돈이 정해져 있으면 왜 사고 싶은 걸 다 못 살까?",
+    analogySeed: "예산은 크기가 정해진 장바구니다.",
+    studentScenario: "매점에서 음료, 과자, 문구류 중 우선순위를 정할 때",
+    oneLineDefinition: "예산은 쓸 수 있는 돈의 한도이고, 선택을 바꾸는 기준이다.",
+  },
+  "money-functions": {
+    contentMode: "term",
+    hookQuestion: "돈은 그냥 종이인데 왜 다들 믿고 쓸까?",
+    analogySeed: "돈은 모두가 믿고 받기로 한 만능 교환권이다.",
+    studentScenario: "용돈, 간편결제, 매점 가격표를 볼 때",
+    oneLineDefinition: "돈은 교환을 쉽게 만들고 가치를 비교하게 해 주는 공통 약속이다.",
+  },
+  "stock-basic": {
+    contentMode: "term",
+    hookQuestion: "주식이 뭐야? 왜 회사 조각이라고 말할까?",
+    analogySeed: "주식은 회사를 잘게 나눈 조각표와 비슷하다.",
+    studentScenario: "좋아하는 브랜드나 게임 회사를 친구들과 조금씩 같이 가진다고 상상할 때",
+    oneLineDefinition: "주식은 회사의 일부를 나타내는 소유 조각이다.",
+  },
+  "inflation-purchasing-power": {
+    contentMode: "term",
+    hookQuestion: "물가가 오르면 왜 같은 만 원으로 덜 사게 될까?",
+    analogySeed: "물가는 같은 게임머니로 살 수 있는 아이템 수가 줄어드는 것과 비슷하다.",
+    studentScenario: "매점, 배달, 교통비가 예전보다 비싸졌다고 느낄 때",
+    oneLineDefinition: "인플레이션은 가격이 오르면서 돈의 구매력이 줄어드는 현상이다.",
+  },
+  "saving-and-interest": {
+    contentMode: "term",
+    hookQuestion: "은행에 돈을 맡기면 왜 조금씩 늘어날까?",
+    analogySeed: "이자는 돈을 잠깐 빌려준 대가로 붙는 사용료다.",
+    studentScenario: "통장 잔액, 저금, 목표 금액 모으기를 생각할 때",
+    oneLineDefinition: "이자는 돈을 맡기거나 빌려준 대가로 붙는 추가 금액이다.",
+  },
+  "loan-and-interest": {
+    contentMode: "term",
+    hookQuestion: "돈을 빌리면 왜 빌린 것보다 더 많이 갚아야 할까?",
+    analogySeed: "대출 이자는 남의 돈을 먼저 쓰는 사용료다.",
+    studentScenario: "휴대폰 할부, 분할 납부, 카드값 이야기를 들을 때",
+    oneLineDefinition: "대출은 미래에 갚기로 하고 돈을 먼저 쓰는 것이고, 이자는 그 대가다.",
+  },
+  "exchange-rate": {
+    contentMode: "term",
+    hookQuestion: "환율이 오르면 왜 해외과자랑 게임 결제가 비싸질까?",
+    analogySeed: "환율은 우리 돈과 외국 돈을 바꾸는 환전 비율표다.",
+    studentScenario: "해외 게임 결제, 수입 과자, 여행 경비 이야기를 들을 때",
+    oneLineDefinition: "환율은 우리 돈과 외국 돈을 서로 바꾸는 비율이다.",
+  },
+  "risk-and-insurance": {
+    contentMode: "term",
+    hookQuestion: "보험은 왜 혼자 대비하지 않고 같이 돈을 모을까?",
+    analogySeed: "보험은 큰 위험을 여러 명이 조금씩 나눠 막는 공동 우산이다.",
+    studentScenario: "휴대폰 파손, 자전거 사고, 병원비 같은 뜻밖의 지출",
+    oneLineDefinition: "보험은 큰 위험 비용을 많은 사람이 나눠 준비하는 장치다.",
+  },
+};
 
 export type DispatchResearchResult =
   | {
@@ -265,6 +346,7 @@ function buildCandidateHeuristics(
   similarity: SimilarityCheckResult,
   history: PublishedContentListItem[],
 ): ResearchSelectionCandidate {
+  const guide = topicCreativeGuides[topic.id];
   const previousTopicLink = findPreviousTopicLink(topic, history);
   const topSimilarityScore = similarity.matches[0]?.score ?? 0;
   const recentSeriesCount = history
@@ -284,6 +366,14 @@ function buildCandidateHeuristics(
   if (topic.seriesOrder === 1) {
     heuristicScore += 4;
     heuristicReasons.push("새 시리즈의 시작점으로 쓰기 좋습니다.");
+  }
+
+  if (guide?.contentMode === "term") {
+    heuristicScore += 14;
+    heuristicReasons.push("중학생이 바로 궁금해할 경제 단어 중심 주제입니다.");
+  } else if (guide?.contentMode === "system") {
+    heuristicScore -= 10;
+    heuristicReasons.push("설명 범위가 넓어져 카드뉴스 포인트가 흐려질 수 있습니다.");
   }
 
   if (previousTopicLink?.relationship === "series_next") {
@@ -324,6 +414,10 @@ function buildCandidateHeuristics(
   if (similarity.matches.length === 0) {
     heuristicScore += 3;
     heuristicReasons.push("가까운 유사 게시가 없어 계정 신선도를 확보하기 좋습니다.");
+  }
+
+  if (guide) {
+    heuristicReasons.push(`후킹 질문: ${guide.hookQuestion}`);
   }
 
   return {
@@ -368,8 +462,11 @@ async function maybeChooseWithLlm(
         "You are acting like the human operator of a Korean middle-school economics Instagram account.",
         "Pick exactly one topicId from the provided shortlist.",
         "Prioritize topics that are safe to approve, clearly distinct from past posts, and help the account feel like a guided learning series.",
+        "Strongly prefer a single economic term that students may hear in real life but not fully understand yet.",
+        "Prefer topics that can be explained with one vivid everyday analogy and one relatable student scenario.",
         "Prefer direct series continuation or strong concept bridges when overlap risk stays low.",
-        "Avoid isolated picks that feel random, repetitive, or too advanced for a middle-school audience.",
+        "Avoid isolated picks that feel random, repetitive, too advanced, or too abstract for a middle-school audience.",
+        "Avoid broad explainers unless no sharper term-based topic is safe.",
         "Return concise Korean.",
       ].join("\n"),
       input: JSON.stringify(
@@ -390,6 +487,10 @@ async function maybeChooseWithLlm(
             seriesOrder: candidate.topic.seriesOrder,
             curriculumPosition: candidate.topic.curriculumPosition,
             teachingAngle: candidate.topic.teachingAngle,
+            contentMode: topicCreativeGuides[candidate.topic.id]?.contentMode ?? "system",
+            hookQuestion: topicCreativeGuides[candidate.topic.id]?.hookQuestion ?? null,
+            analogySeed: topicCreativeGuides[candidate.topic.id]?.analogySeed ?? null,
+            studentScenario: topicCreativeGuides[candidate.topic.id]?.studentScenario ?? null,
             similarityDecision: candidate.similarity.decision,
             topSimilarityScore: candidate.similarity.matches[0]?.score ?? 0,
             previousTopicLink: candidate.previousTopicLink,
@@ -459,13 +560,26 @@ function buildDiagnostics(candidates: ResearchSelectionCandidate[]) {
 }
 
 function buildFallbackDraft(topic: ResearchTopic, selectionMetadata: ResearchSelectionMetadata) {
+  const guide = topicCreativeGuides[topic.id];
   const previousLinkText = selectionMetadata.previousTopicLink
     ? `이번 주제는 직전 흐름인 "${selectionMetadata.previousTopicLink.title}" 다음에 이어 붙이기 좋다. 같은 개념을 반복하기보다 ${topic.teachingAngle}라는 새 각도로 설명해야 한다.`
     : `이번 주제는 ${selectionMetadata.seriesTitle} 시리즈 안에서 ${selectionMetadata.curriculumPosition} 위치를 맡는다. 처음 보는 학생도 따라올 수 있게 정의를 먼저 주고 생활 예시로 바로 연결해야 한다.`;
 
   return {
     title: topic.title,
-    source_text: `${topic.sourceTextSeed}\n\n${previousLinkText}\n\n어려운 용어는 바로 쉬운 말로 바꾸고, 한 카드 안에서는 하나의 이해 포인트만 남긴다. 숫자보다 구조를 먼저 설명하고, 학생이 "그래서 내 생활에서는 어떻게 보이지?"라고 느낄 수 있게 용돈, 간식, 학교생활, 집안 소비 예시를 붙인다.`,
+    source_text: [
+      topic.sourceTextSeed,
+      previousLinkText,
+      guide ? `학생 질문: ${guide.hookQuestion}` : null,
+      guide ? `한 줄 정의: ${guide.oneLineDefinition}` : null,
+      guide ? `비유: ${guide.analogySeed}` : null,
+      guide ? `생활 장면: ${guide.studentScenario}` : null,
+      "한 게시물에서는 경제 단어 하나만 선명하게 설명한다.",
+      "교과서 요약처럼 넓게 퍼지지 말고, 중학생이 실제로 듣는 말이 무슨 뜻인지 풀어 주듯 전개한다.",
+      "첫 장은 궁금증이나 오해에서 시작하고, 중간에는 비유 1개와 생활 예시 1개를 반복해서 연결한다.",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     summary: topic.summary,
     key_terms: topic.keyTerms.slice(0, 6),
     approval_note: `${selectionMetadata.seriesTitle} ${selectionMetadata.seriesOrder}번째 흐름으로 제안합니다. ${selectionMetadata.selectionReason}`,
@@ -667,6 +781,7 @@ async function generateResearchDraft(
 ) {
   const fallback = buildFallbackDraft(topic, selectionMetadata);
   const client = getOpenAIClient();
+  const guide = topicCreativeGuides[topic.id];
 
   if (!client) {
     return fallback;
@@ -681,16 +796,25 @@ async function generateResearchDraft(
         "Pick no new topic; use only the provided concept.",
         "This account should feel like a guided economics learning feed, not a random pile of isolated posts.",
         "Write a concise but grounded script draft in Korean that can later feed a card-news generator.",
-        "The source_text should read like a clean teacher note or briefing memo, not like slide copy.",
+        "The source_text should read like a sharp planning note for a strong carousel, not like a dry teacher memo.",
+        "Center the post on one economic term or one tightly bounded concept.",
+        "Start from a student-style question, confusion, or familiar everyday situation.",
+        "Include one vivid analogy and one middle-school-life scenario.",
+        "Give one clean one-line definition of the term.",
+        "Name one common misunderstanding or confusion point when helpful.",
         "Keep the tone clear, practical, and easy for a middle-school student.",
         "Use the selection plan and published history context to avoid repeating the same framing, examples, or explanation angle.",
         "If a previous topic link exists, connect naturally but keep this draft fully understandable on its own.",
+        "Avoid broad lectures about how the economy works unless the term itself is being defined.",
         "Do not use markdown.",
         "Do not mention outside research or fabricated statistics.",
       ].join("\n"),
       input: [
         "Concept topic:",
         JSON.stringify(topic, null, 2),
+        "",
+        "Creative guide:",
+        JSON.stringify(guide ?? null, null, 2),
         "",
         "Selection metadata:",
         JSON.stringify(selectionMetadata, null, 2),

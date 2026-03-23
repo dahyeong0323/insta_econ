@@ -14,8 +14,8 @@
 
 ## Current Snapshot
 - Product phase: production end-to-end publish 검증 완료
-- Current focus: research selection 품질 강화와 `insta-econ-fzr1` 기준 production 재배포 검증
-- Biggest risk: production env의 실제 도메인 반영 여부, 게시 히스토리 누적 이후 research 유사도 튜닝, Instagram token 수명 관리
+- Current focus: research를 단어형·후킹형 카드뉴스 중심으로 재정렬하고 디자인 QA의 정렬/가독성 검출을 강화
+- Biggest risk: production research가 여전히 추상 입문 주제를 고를 가능성, renderer 미학 QA의 미세 조정, Instagram token 수명 관리
 
 ## Completed
 - [done] 카드뉴스 생성 UI와 기본 파이프라인 구성
@@ -78,16 +78,16 @@
 - [done] `npm run typecheck`, `npm run lint`, `npm run build` 재통과
 
 ## In Progress
-- [doing] 변경된 research/pipeline 코드를 GitHub `main`에 push하고 `insta-econ-fzr1` 자동 배포 반영 확인
-- [doing] 수정된 렌더와 새 page token 기준으로 재게시 검증
+- [doing] 변경된 research/design QA 코드를 GitHub `main`에 push하고 `insta-econ-fzr1` 자동 배포 반영 확인
+- [doing] production dispatch로 단어형 research selection이 실제로 반영되는지 확인
 - [doing] 장기 토큰 기반 운영 흐름과 재인증 절차 정리
 
 ## Next Up
 1. GitHub `main`에 push하고 `insta-econ-fzr1` 배포가 최신 커밋을 반영했는지 확인
-2. `run-prod-check.ps1 -BaseUrl https://insta-econ-fzr1.vercel.app`로 production dispatch/preflight/webhook 재확인
-3. 새 run으로 이미지 승인/게시를 다시 검증
-4. Instagram token 만료 감지와 사전 알림 로직 추가
-5. 두 번째 production publish까지 확인한 뒤 scheduler 자동화 재개
+2. production research dispatch로 `주식`, `환율`, `이자` 같은 단어형 주제가 shortlist 상위에 오는지 점검
+3. 새 run으로 이미지 승인 전 timeline/checklist/spotlight 디자인 품질을 다시 검수
+4. 필요하면 QA 문구와 모듈 선택 규칙을 한 번 더 미세 조정
+5. Instagram token 만료 감지와 사전 알림 로직 추가
 
 ## Backlog
 - [todo] 운영 UI에서 stale run 목록과 수동 정리 기능 보강
@@ -141,3 +141,11 @@
   - official docs check confirmed `gpt-5.4-mini` on OpenAI model docs / compare page
   - local and prod env reference files now set `OPENAI_MODEL=gpt-5.4-mini` and `OPENAI_TEXT_MODEL=gpt-5.4-mini`
   - `OPENAI_PDF_MODEL` stays on `gpt-4o`
+- 2026-03-23 research/design pivot:
+  - content prompt를 `경제 단어 1개 + 학생 질문 + 생활 비유 1개` 구조로 강화
+  - research heuristic에 단어형 주제 보너스와 추상 구조형 주제 감점을 추가
+  - topic pool에 `주식이 뭐야?` 주제를 추가하고 금융 시리즈 순서를 갱신
+  - timeline renderer에서 상하 중복 정보 블록을 제거하고 대칭 정렬을 동적으로 계산
+  - checklist table hierarchy를 키우고 숫자 라벨 중복을 숨기도록 조정
+  - QA에 timeline 비대칭, checklist 숫자 위계 약화, weak number spotlight 검출을 추가
+  - local validation: `npm run typecheck`, `npm run lint`, `npm run build` 통과

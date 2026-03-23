@@ -497,10 +497,10 @@ body{
 }
 .check-row{
   display:grid;
-  min-height:94px;
-  grid-template-columns:64px minmax(0,1fr) minmax(220px,auto);
+  min-height:104px;
+  grid-template-columns:76px minmax(0,1.1fr) minmax(250px,.95fr);
   align-items:center;
-  gap:20px;
+  gap:24px;
   border-bottom:1px solid #f0eef2;
   padding:16px 0;
 }
@@ -509,14 +509,14 @@ body{
 }
 .check-icon{
   display:flex;
-  width:48px;
-  height:48px;
+  width:56px;
+  height:56px;
   align-items:center;
   justify-content:center;
   border-radius:999px;
   background:#ff8a57;
   color:#fff;
-  font-size:16px;
+  font-size:20px;
   font-weight:900;
   align-self:flex-start;
 }
@@ -526,8 +526,8 @@ body{
   min-width:0;
 }
 .check-label{
-  color:#b0acb5;
-  font-size:12px;
+  color:#8e8895;
+  font-size:13px;
   font-weight:900;
   letter-spacing:.08em;
   text-transform:uppercase;
@@ -535,16 +535,16 @@ body{
 .check-name{
   margin-top:4px;
   color:#202024;
-  font-size:18px;
+  font-size:20px;
   font-weight:900;
   letter-spacing:-.03em;
   white-space:pre-line;
 }
 .check-value{
-  color:#a7a2ac;
-  font-size:18px;
-  font-weight:500;
-  line-height:1.55;
+  color:#6f6974;
+  font-size:20px;
+  font-weight:700;
+  line-height:1.6;
   text-align:right;
   white-space:pre-line;
 }
@@ -1082,7 +1082,7 @@ function renderChecklistTable(module: SlideModule) {
         (item, index) => `<div class="check-row">
           <div class="check-icon">${String(index + 1).padStart(2, "0")}</div>
           <div class="check-copy">
-            <div class="check-label">${escapeHtml(item.label)}</div>
+            ${/^\d+$/u.test(item.label.trim()) ? "" : `<div class="check-label">${escapeHtml(item.label)}</div>`}
             <div class="check-name">${nl2br(item.title)}</div>
           </div>
           <div class="check-value">${nl2br(item.value)}</div>
@@ -1094,11 +1094,13 @@ function renderChecklistTable(module: SlideModule) {
 
 function renderTimeline(module: SlideModule) {
   const items = module.items.slice(0, 4);
+  const columnCount = Math.max(items.length, 3);
+  const edgeInset = `${50 / columnCount}%`;
 
   return `<div class="timeline-wrap">
     <div class="timeline-top">
-      <div class="timeline-line"></div>
-      <div class="timeline-grid">
+      <div class="timeline-line" style="left:${edgeInset};right:${edgeInset};"></div>
+      <div class="timeline-grid" style="grid-template-columns:repeat(${columnCount},minmax(0,1fr));">
         ${items
           .map(
             (item) => `<div class="timeline-step">
@@ -1110,7 +1112,7 @@ function renderTimeline(module: SlideModule) {
           .join("")}
       </div>
     </div>
-    ${renderCardGrid(module, module.items.length > 3)}
+    ${module.footer ? `<div style="text-align:center;color:#b0acb5;font-size:15px;font-weight:700;line-height:1.7;">${nl2br(module.footer)}</div>` : ""}
   </div>`;
 }
 
