@@ -18,7 +18,7 @@ const displayFont = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "ECON CAROUSEL V2",
+  title: "보리의 10대를 위한 경제",
   description:
     "경제학 텍스트와 PDF를 8장 카드뉴스로 바꾸는 한국어 에이전트 기반 웹 앱",
 };

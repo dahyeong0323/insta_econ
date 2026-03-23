@@ -182,7 +182,7 @@ function sanitizeReaderText(text: string | null | undefined) {
 
 function normalizeBadge(slideNumber: number, badge: string) {
   if (slideNumber === 1) {
-    return "econ-carousel-v2";
+    return "보리의 10대를 위한 경제";
   }
 
   if (slideNumber === 8) {
@@ -428,6 +428,7 @@ function normalizeProject(project: RawProject) {
   return carouselProjectSchema.parse(
     withStandaloneHtml({
       ...project,
+      brand_label: "보리의 10대를 위한 경제",
       slides: project.slides.map((slide, index) => normalizeSlide(slide, index)),
     }),
   );

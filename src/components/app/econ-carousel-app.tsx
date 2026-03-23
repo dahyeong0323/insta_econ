@@ -873,7 +873,7 @@ export function EconCarouselApp() {
         <header className="mb-8 flex items-center justify-between rounded-full border border-black/5 bg-white/80 px-5 py-3 backdrop-blur">
           <div>
             <div className="text-[11px] font-black uppercase tracking-[0.25em] text-zinc-400">
-              ECON CAROUSEL V2
+              보리의 10대를 위한 경제
             </div>
             <div className="text-sm font-bold text-zinc-600">
               한국 중학생용 경제 카드뉴스 자동화 스튜디오
@@ -890,7 +890,7 @@ export function EconCarouselApp() {
           <div className="space-y-6">
             <div className="rounded-[38px] bg-[#ff6b35] px-7 py-8 text-[#17171b] shadow-[0_28px_80px_rgba(255,107,53,0.18)]">
               <div className="inline-flex rounded-[18px] bg-black/10 px-5 py-3 text-[15px] font-black">
-                econ-carousel-v2
+                보리의 10대를 위한 경제
               </div>
               <h1 className="mt-7 max-w-[9ch] text-[66px] font-black leading-[0.94] tracking-[-0.08em] sm:text-[82px]">
                 경제 카드뉴스

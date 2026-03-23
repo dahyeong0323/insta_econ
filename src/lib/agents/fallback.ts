@@ -211,7 +211,7 @@ export function buildFallbackProject(bundle: SourceBundle): CarouselProject {
       slide_number: 1,
       role: "hook",
       visual_tone: "cover",
-      question_badge: "econ-carousel-v2",
+      question_badge: "보리의 10대를 위한 경제",
       headline: `${title}\n왜 중요할까?`,
       body: truncate(bundle.source_summary, 100),
       emphasis: "핵심은 구조예요",
