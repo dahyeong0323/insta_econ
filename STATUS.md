@@ -137,3 +137,7 @@
   - similarity는 title 외에 concept id, alias, caption, slide body, research metadata까지 반영하도록 확장
   - synthetic validation에서 예전 로직 기준 첫 clear 후보는 `scarcity`였지만, 새 로직은 `money-functions -> inflation` 다음 흐름으로 `saving-and-interest`를 선택
   - production runtime은 `PUBLIC_BASE_URL`이 낡았더라도 Vercel production domain fallback을 우선 보도록 보강
+- 2026-03-23 model switch:
+  - official docs check confirmed `gpt-5.4-mini` on OpenAI model docs / compare page
+  - local and prod env reference files now set `OPENAI_MODEL=gpt-5.4-mini` and `OPENAI_TEXT_MODEL=gpt-5.4-mini`
+  - `OPENAI_PDF_MODEL` stays on `gpt-4o`

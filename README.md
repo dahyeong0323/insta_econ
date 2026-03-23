@@ -29,9 +29,9 @@ Create `.env.local` and fill in:
 
 ```env
 OPENAI_API_KEY=your_api_key
-OPENAI_MODEL=gpt-5-mini
-OPENAI_TEXT_MODEL=gpt-5-mini
-OPENAI_PDF_MODEL=gpt-5-mini
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_TEXT_MODEL=gpt-5.4-mini
+OPENAI_PDF_MODEL=gpt-4o
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_DEFAULT_CHAT_ID=your_telegram_chat_id
 PUBLIC_BASE_URL=https://your-public-app-url.com

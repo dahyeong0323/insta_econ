@@ -17,9 +17,9 @@ export function getOpenAIClient() {
 }
 
 export function getTextModel() {
-  return process.env.OPENAI_TEXT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5-mini";
+  return process.env.OPENAI_TEXT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
 }
 
 export function getPdfModel() {
-  return process.env.OPENAI_PDF_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5-mini";
+  return process.env.OPENAI_PDF_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
 }
