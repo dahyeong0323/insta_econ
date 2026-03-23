@@ -57,6 +57,8 @@ type InstagramGraphErrorPayload = {
   };
 };
 
+import { resolvePublicBaseUrl } from "@/lib/public-base-url";
+
 function getEnv(name: string) {
   const value = process.env[name]?.trim();
 
@@ -100,11 +102,7 @@ function getInstagramAccessTokenConfig() {
 }
 
 function getPublicBaseUrl() {
-  return (
-    process.env.PUBLIC_BASE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    null
-  );
+  return resolvePublicBaseUrl();
 }
 
 function buildGraphUrl(pathname: string) {

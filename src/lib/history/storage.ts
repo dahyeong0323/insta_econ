@@ -3,6 +3,11 @@ import path from "node:path";
 
 import { type RunState } from "@/lib/agents/schema";
 import {
+  researchDispatchArtifactSchema,
+  type ResearchSelectionMetadata,
+} from "@/lib/research/metadata";
+import { readArtifactText } from "@/lib/runs/storage";
+import {
   ensurePersistentStorageConfigured,
   isBlobStorageEnabled,
   readBlobJson,
@@ -39,6 +44,20 @@ export type SimilarContentMatch = {
   score: number;
 };
 
+export type PublishedResearchContext = Pick<
+  ResearchSelectionMetadata,
+  | "topicId"
+  | "conceptId"
+  | "seriesId"
+  | "seriesTitle"
+  | "seriesOrder"
+  | "curriculumPosition"
+  | "narrativeArc"
+  | "teachingAngle"
+  | "topicAliases"
+  | "previousTopicLink"
+>;
+
 export type PublishedContentListItem = {
   runId: string;
   title: string;
@@ -50,6 +69,8 @@ export type PublishedContentListItem = {
   slideHeadlines: string[];
   conceptSummary: string;
   conceptTokens: string[];
+  researchContext: PublishedResearchContext | null;
+  similarityTokens: string[];
 };
 
 type PublishedContentRow = {
@@ -159,6 +180,10 @@ function safeJsonParseArray(value: string) {
   }
 }
 
+function mergeUniqueStrings(values: Array<string | null | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
+}
+
 function jaccard(left: string[], right: string[]) {
   const leftSet = new Set(left);
   const rightSet = new Set(right);
@@ -179,12 +204,66 @@ function jaccard(left: string[], right: string[]) {
   return intersection / union.size;
 }
 
+function buildResearchContextTokens(context: PublishedResearchContext | null) {
+  if (!context) {
+    return [];
+  }
+
+  return tokenize(
+    [
+      context.topicId,
+      context.conceptId,
+      context.seriesId,
+      context.seriesTitle,
+      context.curriculumPosition,
+      context.narrativeArc,
+      context.teachingAngle,
+      context.topicAliases.join(" "),
+      context.previousTopicLink?.topicId ?? "",
+      context.previousTopicLink?.title ?? "",
+    ].join(" "),
+  );
+}
+
+function buildSimilarityTokens(input: {
+  title: string;
+  keyTerms: string[];
+  conceptTokens: string[];
+  conceptSummary: string;
+  slideHeadlines: string[];
+  researchContext: PublishedResearchContext | null;
+}) {
+  return mergeUniqueStrings([
+    ...input.conceptTokens,
+    ...tokenize(input.title),
+    ...tokenize(input.conceptSummary),
+    ...input.keyTerms.flatMap((term) => tokenize(term)),
+    ...input.slideHeadlines.flatMap((headline) => tokenize(headline)),
+    ...buildResearchContextTokens(input.researchContext),
+  ]);
+}
+
 function buildConceptSummary(run: RunState) {
   const parts = [
     run.project?.project_title ?? run.title ?? "",
     run.source_bundle?.source_summary ?? "",
+    run.project?.caption ?? "",
     ...(run.source_bundle?.key_terms ?? []),
-    ...(run.project?.slides.map((slide) => slide.headline) ?? []),
+    ...(run.project?.slides.flatMap((slide) => [
+      slide.headline,
+      slide.body,
+      slide.emphasis ?? "",
+      slide.save_point ?? "",
+      slide.module.title,
+      slide.module.subtitle ?? "",
+      slide.module.footer ?? "",
+      ...slide.module.items.flatMap((item) => [
+        item.label,
+        item.title,
+        item.value,
+        item.note ?? "",
+      ]),
+    ]) ?? []),
   ]
     .map((part) => part.trim())
     .filter(Boolean);
@@ -227,6 +306,8 @@ function buildPublishedContentRecord(run: RunState): PublishedContentRecord {
 }
 
 function mapRecordToListItem(record: PublishedContentRecord): PublishedContentListItem {
+  const researchContext: PublishedResearchContext | null = null;
+
   return {
     runId: record.run_id,
     title: record.title,
@@ -238,7 +319,56 @@ function mapRecordToListItem(record: PublishedContentRecord): PublishedContentLi
     slideHeadlines: record.slide_headlines,
     conceptSummary: record.concept_summary,
     conceptTokens: record.concept_tokens,
+    researchContext,
+    similarityTokens: buildSimilarityTokens({
+      title: record.title,
+      keyTerms: record.key_terms,
+      conceptTokens: record.concept_tokens,
+      conceptSummary: record.concept_summary,
+      slideHeadlines: record.slide_headlines,
+      researchContext,
+    }),
   };
+}
+
+async function readPublishedResearchContext(runId: string) {
+  try {
+    const raw = await readArtifactText(runId, "research-dispatch.json");
+    const parsed = researchDispatchArtifactSchema.parse(JSON.parse(raw));
+    return parsed.selection_metadata;
+  } catch {
+    return null;
+  }
+}
+
+async function attachResearchContext(
+  items: PublishedContentListItem[],
+  includeResearchContext: boolean,
+) {
+  if (!includeResearchContext || items.length === 0) {
+    return items;
+  }
+
+  const entries = await Promise.all(
+    items.map(async (item) => {
+      const researchContext = await readPublishedResearchContext(item.runId);
+
+      return {
+        ...item,
+        researchContext,
+        similarityTokens: buildSimilarityTokens({
+          title: item.title,
+          keyTerms: item.keyTerms,
+          conceptTokens: item.conceptTokens,
+          conceptSummary: item.conceptSummary,
+          slideHeadlines: item.slideHeadlines,
+          researchContext,
+        }),
+      };
+    }),
+  );
+
+  return entries;
 }
 
 async function readBlobHistoryRecords() {
@@ -349,14 +479,21 @@ export async function savePublishedRunToHistory(run: RunState) {
   return record;
 }
 
-export async function listPublishedContent(limit = 50) {
+export async function listPublishedContent(
+  limit = 50,
+  options?: {
+    includeResearchContext?: boolean;
+  },
+) {
+  const includeResearchContext = options?.includeResearchContext ?? false;
+
   if (isBlobStorageEnabled()) {
     const records = await readBlobHistoryRecords();
-    return records.slice(0, limit).map(mapRecordToListItem);
+    return attachResearchContext(records.slice(0, limit).map(mapRecordToListItem), includeResearchContext);
   }
 
   ensurePersistentStorageConfigured("Published content history");
-  return withDb((db) => {
+  const items = withDb((db) => {
     const statement = db.prepare(`
       SELECT *
       FROM published_content
@@ -376,15 +513,28 @@ export async function listPublishedContent(limit = 50) {
         slideHeadlines: safeJsonParseArray(String(row.slide_headlines_json ?? "[]")),
         conceptSummary: String(row.concept_summary ?? ""),
         conceptTokens: safeJsonParseArray(String(row.concept_tokens_json ?? "[]")),
+        researchContext: null,
+        similarityTokens: buildSimilarityTokens({
+          title: String(row.title),
+          keyTerms: safeJsonParseArray(String(row.key_terms_json ?? "[]")),
+          conceptTokens: safeJsonParseArray(String(row.concept_tokens_json ?? "[]")),
+          conceptSummary: String(row.concept_summary ?? ""),
+          slideHeadlines: safeJsonParseArray(String(row.slide_headlines_json ?? "[]")),
+          researchContext: null,
+        }),
       }),
     );
   });
+
+  return attachResearchContext(items, includeResearchContext);
 }
 
-export async function findSimilarPublishedContent(input: {
+export function findSimilarPublishedContentInHistory(input: {
   title?: string | null;
   keyTerms?: string[];
   summary?: string | null;
+  aliases?: string[];
+  history: PublishedContentListItem[];
   limit?: number;
   minScore?: number;
 }) {
@@ -392,15 +542,19 @@ export async function findSimilarPublishedContent(input: {
   const minScore = input.minScore ?? 0.34;
   const title = input.title?.trim() || "";
   const keyTerms = (input.keyTerms ?? []).map((term) => term.trim()).filter(Boolean);
-  const probeTokens = tokenize([title, input.summary ?? "", keyTerms.join(" ")].join(" "));
-  const probeKeyTerms = [...new Set(keyTerms.map((term) => normalizeTopic(term)))];
-  const candidates = await listPublishedContent(limit);
+  const aliases = (input.aliases ?? []).map((alias) => alias.trim()).filter(Boolean);
+  const probeTokens = tokenize([title, input.summary ?? "", keyTerms.join(" "), aliases.join(" ")].join(" "));
+  const probeKeyTerms = [...new Set([...keyTerms, ...aliases].map((term) => normalizeTopic(term)))];
+  const candidates = input.history.slice(0, limit);
 
   return candidates
     .map<SimilarContentMatch | null>((candidate) => {
-      const candidateTerms = candidate.keyTerms.map((term: string) => normalizeTopic(term));
+      const candidateTerms = mergeUniqueStrings([
+        ...candidate.keyTerms,
+        ...(candidate.researchContext?.topicAliases ?? []),
+      ]).map((term: string) => normalizeTopic(term));
       const sharedTerms = probeKeyTerms.filter((term: string) => candidateTerms.includes(term));
-      const topicScore = jaccard(probeTokens, candidate.conceptTokens);
+      const topicScore = jaccard(probeTokens, candidate.similarityTokens);
       const termScore =
         probeKeyTerms.length === 0 && candidateTerms.length === 0
           ? 0
@@ -422,4 +576,22 @@ export async function findSimilarPublishedContent(input: {
     })
     .filter((candidate: SimilarContentMatch | null): candidate is SimilarContentMatch => candidate !== null)
     .sort((left: SimilarContentMatch, right: SimilarContentMatch) => right.score - left.score);
+}
+
+export async function findSimilarPublishedContent(input: {
+  title?: string | null;
+  keyTerms?: string[];
+  summary?: string | null;
+  aliases?: string[];
+  limit?: number;
+  minScore?: number;
+}) {
+  const candidates = await listPublishedContent(input.limit ?? 30, {
+    includeResearchContext: true,
+  });
+
+  return findSimilarPublishedContentInHistory({
+    ...input,
+    history: candidates,
+  });
 }

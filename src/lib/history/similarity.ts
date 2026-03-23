@@ -1,6 +1,7 @@
 import {
-  findSimilarPublishedContent,
+  findSimilarPublishedContentInHistory,
   listPublishedContent,
+  type PublishedContentListItem,
   type SimilarContentMatch,
 } from "@/lib/history/storage";
 
@@ -18,12 +19,22 @@ export type SimilarityCheckResult = {
   matches: SimilarContentMatch[];
 };
 
+export type SimilarityCheckInput = {
+  title: string;
+  keyTerms?: string[];
+  summary?: string | null;
+  conceptId?: string | null;
+  topicId?: string | null;
+  aliases?: string[];
+};
+
 export const similarityThresholds = {
-  blockScore: 0.78,
-  reviewScore: 0.5,
+  blockScore: 0.76,
+  reviewScore: 0.48,
   blockSharedTerms: 3,
   reviewSharedTerms: 2,
-  historyLimit: 60,
+  exactHistoryLimit: 240,
+  similarityHistoryLimit: 120,
 } as const;
 
 function normalizeTopic(value: string) {
@@ -35,41 +46,103 @@ function normalizeTopic(value: string) {
     .trim();
 }
 
+function buildNormalizedTopicSet(input: SimilarityCheckInput) {
+  return new Set(
+    [input.title, ...(input.aliases ?? [])]
+      .map((value) => normalizeTopic(value))
+      .filter(Boolean),
+  );
+}
+
+function exactTopicMatchByMetadata(
+  history: PublishedContentListItem[],
+  input: SimilarityCheckInput,
+) {
+  return (
+    history.find((item) => {
+      if (input.conceptId && item.researchContext?.conceptId === input.conceptId) {
+        return true;
+      }
+
+      if (input.topicId && item.researchContext?.topicId === input.topicId) {
+        return true;
+      }
+
+      return false;
+    }) ?? null
+  );
+}
+
+function exactTopicMatchByTitleOrAlias(
+  history: PublishedContentListItem[],
+  input: SimilarityCheckInput,
+) {
+  const normalizedCandidates = buildNormalizedTopicSet(input);
+
+  if (normalizedCandidates.size === 0) {
+    return null;
+  }
+
+  return (
+    history.find((item) => {
+      if (normalizedCandidates.has(item.canonicalTopic)) {
+        return true;
+      }
+
+      const historyAliases = (item.researchContext?.topicAliases ?? []).map((alias) =>
+        normalizeTopic(alias),
+      );
+
+      return historyAliases.some((alias) => normalizedCandidates.has(alias));
+    }) ?? null
+  );
+}
+
 function buildReason(match: SimilarContentMatch, severity: "block" | "review") {
   const overlapText =
     match.sharedTerms.length > 0
       ? `공통 키워드: ${match.sharedTerms.join(", ")}`
-      : "공통 키워드는 적지만 전체 개념 유사도가 높음";
+      : "공통 키워드는 적지만 설명 각도가 매우 가깝습니다";
 
   return severity === "block"
-    ? `${match.title}와 너무 가깝습니다. (${overlapText}, score ${match.score})`
-    : `${match.title}와 각도가 겹칠 수 있습니다. (${overlapText}, score ${match.score})`;
+    ? `${match.title}와 지나치게 가깝습니다. (${overlapText}, score ${match.score})`
+    : `${match.title}와 설명 각도가 일부 겹칩니다. (${overlapText}, score ${match.score})`;
 }
 
-export async function evaluateCandidateSimilarity(input: {
-  title: string;
-  keyTerms?: string[];
-  summary?: string | null;
-}): Promise<SimilarityCheckResult> {
-  const normalizedTitle = normalizeTopic(input.title);
-  const history = await listPublishedContent(similarityThresholds.historyLimit);
+function buildExactMatchReason(
+  match: PublishedContentListItem,
+  input: SimilarityCheckInput,
+) {
+  if (input.conceptId && match.researchContext?.conceptId === input.conceptId) {
+    return `${match.title}와 같은 핵심 개념(conceptId)이 이미 게시되었습니다. 새 설명 각도나 다음 단계 개념으로 바꿔야 합니다.`;
+  }
+
+  if (input.topicId && match.researchContext?.topicId === input.topicId) {
+    return `${match.title}와 같은 research topic이 이미 게시되었습니다. 같은 주제를 다시 올리지 않도록 다른 주제를 고르세요.`;
+  }
+
+  return `${match.title}와 제목 또는 alias가 사실상 같습니다. 같은 개념의 재탕이 아닌지 다시 확인해야 합니다.`;
+}
+
+export function evaluateCandidateSimilarityAgainstHistory(
+  input: SimilarityCheckInput,
+  history: PublishedContentListItem[],
+): SimilarityCheckResult {
   const exactTopicMatch =
-    normalizedTitle.length > 0
-      ? history.find((item) => item.canonicalTopic === normalizedTitle) ?? null
-      : null;
-  const matches = (await findSimilarPublishedContent({
+    exactTopicMatchByMetadata(history, input) ?? exactTopicMatchByTitleOrAlias(history, input);
+  const matches = findSimilarPublishedContentInHistory({
     title: input.title,
     keyTerms: input.keyTerms ?? [],
     summary: input.summary ?? "",
-    limit: similarityThresholds.historyLimit,
+    aliases: input.aliases ?? [],
+    history,
+    limit: similarityThresholds.similarityHistoryLimit,
     minScore: 0.18,
-  })).slice(0, 5);
+  }).slice(0, 5);
   const reasons: string[] = [];
 
   if (exactTopicMatch) {
-    reasons.push(
-      `${exactTopicMatch.title}와 주제명이 사실상 같습니다. 새로운 개념 또는 다른 설명 축으로 바꿔야 합니다.`,
-    );
+    reasons.push(buildExactMatchReason(exactTopicMatch, input));
 
     return {
       decision: "block",
@@ -120,8 +193,18 @@ export async function evaluateCandidateSimilarity(input: {
 
   return {
     decision: "clear",
-    reasons: ["최근 게시 이력과 비교했을 때 뚜렷한 중복이나 과도한 유사성이 없습니다."],
+    reasons: ["최근 게시 이력과 비교했을 때 주제 중복이나 설명 각도 충돌이 뚜렷하지 않습니다."],
     exactTopicMatch: null,
     matches,
   };
+}
+
+export async function evaluateCandidateSimilarity(
+  input: SimilarityCheckInput,
+): Promise<SimilarityCheckResult> {
+  const history = await listPublishedContent(similarityThresholds.exactHistoryLimit, {
+    includeResearchContext: true,
+  });
+
+  return evaluateCandidateSimilarityAgainstHistory(input, history);
 }

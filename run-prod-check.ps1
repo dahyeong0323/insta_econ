@@ -1,3 +1,7 @@
+param(
+  [string]$BaseUrl
+)
+
 $envFile = Get-Content -LiteralPath ".env.local"
 
 function Get-EnvValue([string]$name) {
@@ -10,12 +14,17 @@ function Get-EnvValue([string]$name) {
   return $line.Split("=", 2)[1].Trim()
 }
 
-$baseUrl = Get-EnvValue "PUBLIC_BASE_URL"
+$resolvedBaseUrl = if ($BaseUrl) {
+  $BaseUrl.Trim().TrimEnd("/")
+} else {
+  (Get-EnvValue "PUBLIC_BASE_URL").TrimEnd("/")
+}
+
 $dispatchSecret = Get-EnvValue "RESEARCH_DISPATCH_SECRET"
 $telegramSecret = Get-EnvValue "TELEGRAM_WEBHOOK_SECRET"
 $operatorSecret = Get-EnvValue "OPERATOR_API_SECRET"
 
-Write-Host "Checking production endpoints against $baseUrl"
+Write-Host "Checking production endpoints against $resolvedBaseUrl"
 
 $dispatchHeaders = @{
   Authorization = "Bearer $dispatchSecret"
@@ -34,10 +43,10 @@ $telegramHeaders = @{
 
 try {
   $dispatchResponse = Invoke-WebRequest `
-    -Uri "$baseUrl/api/research/dispatch" `
+    -Uri "$resolvedBaseUrl/api/research/dispatch" `
     -Method POST `
     -Headers $dispatchHeaders `
-    -Body "{}" `
+    -Body '{"sendToTelegram":false}' `
     -UseBasicParsing
   Write-Host "dispatch status:" $dispatchResponse.StatusCode
   Write-Host $dispatchResponse.Content
@@ -48,7 +57,7 @@ try {
 
 try {
   $preflightResponse = Invoke-WebRequest `
-    -Uri "$baseUrl/api/instagram/preflight" `
+    -Uri "$resolvedBaseUrl/api/instagram/preflight" `
     -Method POST `
     -Headers $operatorHeaders `
     -Body "{}" `
@@ -62,7 +71,7 @@ try {
 
 try {
   Invoke-WebRequest `
-    -Uri "$baseUrl/api/telegram/webhook" `
+    -Uri "$resolvedBaseUrl/api/telegram/webhook" `
     -Method POST `
     -Headers @{ "Content-Type" = "application/json" } `
     -Body "{}" `
@@ -78,7 +87,7 @@ try {
 
 try {
   $webhookResponse = Invoke-WebRequest `
-    -Uri "$baseUrl/api/telegram/webhook" `
+    -Uri "$resolvedBaseUrl/api/telegram/webhook" `
     -Method POST `
     -Headers $telegramHeaders `
     -Body "{}" `
@@ -92,4 +101,4 @@ try {
 
 Write-Host ""
 Write-Host "Operator publish endpoints still require a real run id to test fully."
-Write-Host "Use the saved operator secret header for manual publish/image requests after dispatch succeeds."
+Write-Host "Use -BaseUrl https://insta-econ-fzr1.vercel.app to override a stale local PUBLIC_BASE_URL."

@@ -1,9 +1,9 @@
 # Production Preflight
 
 ## Current status
-- Local code includes operator API auth and Telegram webhook secret validation.
-- Telegram webhook is already pointed at `https://insta-econ.vercel.app/api/telegram/webhook`.
-- The only remaining blocker before live flow testing is deploying the latest code to Vercel.
+- Local code now hardens research selection, history comparison, and series continuity before production testing.
+- The active production reference is the Vercel project `insta-econ-fzr1`.
+- The active production domain should be treated as `https://insta-econ-fzr1.vercel.app`.
 
 ## Required Vercel environment variables
 - `TELEGRAM_WEBHOOK_SECRET`
@@ -13,16 +13,16 @@
 - `TELEGRAM_WEBHOOK_SECRET`: use the same value as local `.env.local`
 - `OPERATOR_API_SECRET`: use the same value as local `.env.local`
 
-## After deploy
-1. Call `POST /api/research/dispatch` with `Authorization: Bearer <RESEARCH_DISPATCH_SECRET>`
-2. Call `POST /api/telegram/webhook` without the Telegram secret header
-3. Confirm the webhook now returns `401`
-4. Trigger one full flow:
-   `research -> Telegram script approval -> render -> Telegram image approval`
-5. Run Instagram publish only after the above path is clean
+## Production checks
+1. Run `./run-prod-check.ps1 -BaseUrl https://insta-econ-fzr1.vercel.app`
+2. Confirm `POST /api/research/dispatch` succeeds with `sendToTelegram:false`
+3. Confirm `POST /api/instagram/preflight` reports `ready` or a clearly actionable warning
+4. Confirm `POST /api/telegram/webhook` without the Telegram secret returns `401`
+5. Trigger one full flow only after the above checks look clean:
+   `research -> Telegram script approval -> render -> Telegram image approval -> Instagram publish`
 
 ## Expected behavior after latest deploy
-- `POST /api/telegram/webhook` without `x-telegram-bot-api-secret-token` should fail
-- `POST /api/runs/[id]/publish` without operator secret should fail
-- `skip` should close the run instead of leaving it active
-- Telegram delivery failure during dispatch should mark the run as failed
+- Research dispatch should return richer selection metadata and still create a normal approval-ready run
+- The operator should see why the topic fits the account flow, not only the topic summary
+- Similar or already-posted concepts should be blocked more aggressively during research
+- Runtime base URL resolution should prefer the active Vercel production domain when available

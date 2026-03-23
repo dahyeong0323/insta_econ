@@ -1,8 +1,8 @@
 import { type PublishRunInput } from "@/lib/agents/schema";
+import { resolvePublicBaseUrl } from "@/lib/public-base-url";
 
 function getAppBaseUrl() {
-  const baseUrl =
-    process.env.PUBLIC_BASE_URL?.trim() ?? process.env.NEXT_PUBLIC_APP_URL?.trim() ?? null;
+  const baseUrl = resolvePublicBaseUrl();
 
   if (!baseUrl) {
     throw new Error("PUBLIC_BASE_URL or NEXT_PUBLIC_APP_URL is required.");

@@ -14,8 +14,8 @@
 
 ## Current Snapshot
 - Product phase: production end-to-end publish 검증 완료
-- Current focus: `insta-econ-fzr1` 운영 배포 기준 정리와 실제 게시 흐름 재검증
-- Biggest risk: `PUBLIC_BASE_URL`와 운영 도메인 불일치, 디자인 완성도 최종 조정, Instagram token 수명 관리
+- Current focus: research selection 품질 강화와 `insta-econ-fzr1` 기준 production 재배포 검증
+- Biggest risk: production env의 실제 도메인 반영 여부, 게시 히스토리 누적 이후 research 유사도 튜닝, Instagram token 수명 관리
 
 ## Completed
 - [done] 카드뉴스 생성 UI와 기본 파이프라인 구성
@@ -66,17 +66,27 @@
 - [done] Graph API Explorer 임시 토큰 대신 Page access token 운영 가이드를 `docs/instagram-token-playbook.md`에 추가
 - [done] GitHub `main` 브랜치와 Vercel `insta-econ-fzr1` 프로젝트를 연결하고 최신 앱 코드를 push
 - [done] `insta-econ-fzr1` 배포에서 새 `INSTAGRAM_PAGE_ACCESS_TOKEN`이 인식되고 Instagram account probe가 성공하는 것 확인
+- [done] research topic catalog에 `series`, `aliases`, `curriculumPosition`, `teachingAngle` 메타데이터 추가
+- [done] research selection을 `정적 후보 전체 평가 -> heuristic 점수 -> LLM shortlist rerank` 구조로 강화
+- [done] research artifact에 selection metadata와 diagnostics를 저장해 선택 근거를 추적 가능하게 보강
+- [done] published history 비교에 caption, slide body, alias, research metadata를 반영해 유사도 판정 심화
+- [done] Telegram script approval 메시지에 시리즈 흐름/이전 주제 연결/선정 이유 노출 추가
+- [done] runtime base URL 해석을 Vercel production domain fallback까지 포함하도록 보강
+- [done] `scripts/debug-research-selection.mjs` 추가로 real/synthetic research selection 재현 테스트 경로 마련
+- [done] local validation: `node scripts/debug-research-selection.mjs --mode real` 통과
+- [done] local validation: `node scripts/debug-research-selection.mjs` synthetic 시나리오에서 `scarcity -> saving-and-interest` 개선 확인
+- [done] `npm run typecheck`, `npm run lint`, `npm run build` 재통과
 
 ## In Progress
-- [doing] 활성 운영 도메인을 `insta-econ-fzr1` 기준으로 맞추고 `PUBLIC_BASE_URL`까지 정렬
+- [doing] 변경된 research/pipeline 코드를 GitHub `main`에 push하고 `insta-econ-fzr1` 자동 배포 반영 확인
 - [doing] 수정된 렌더와 새 page token 기준으로 재게시 검증
 - [doing] 장기 토큰 기반 운영 흐름과 재인증 절차 정리
 
 ## Next Up
-1. `insta-econ-fzr1`의 `PUBLIC_BASE_URL`을 실제 운영 도메인으로 맞추고 production preflight를 다시 확인
-2. 새 run으로 이미지 승인/게시를 다시 검증
-3. Instagram token 만료 감지와 사전 알림 로직 추가
-4. publish recovery를 운영 UI에서 처리할지 여부 결정
+1. GitHub `main`에 push하고 `insta-econ-fzr1` 배포가 최신 커밋을 반영했는지 확인
+2. `run-prod-check.ps1 -BaseUrl https://insta-econ-fzr1.vercel.app`로 production dispatch/preflight/webhook 재확인
+3. 새 run으로 이미지 승인/게시를 다시 검증
+4. Instagram token 만료 감지와 사전 알림 로직 추가
 5. 두 번째 production publish까지 확인한 뒤 scheduler 자동화 재개
 
 ## Backlog
@@ -122,3 +132,8 @@
   - `main`에 최신 앱 코드 `70950e0`를 push했고 `insta-econ-fzr1`가 더 이상 기본 Next 앱이 아닌 실제 앱을 서빙하는 것 확인
   - `insta-econ-fzr1`의 `/api/instagram/preflight`에서 새 `INSTAGRAM_PAGE_ACCESS_TOKEN`과 `@borii_econ` account probe 성공 확인
   - 현재 남은 운영 경고는 `PUBLIC_BASE_URL`이 예전 도메인으로 남아 있는 점
+- 2026-03-23 research hardening:
+  - research는 이제 static topic pool의 첫 clear 후보를 그대로 쓰지 않고, published history와 series continuity를 함께 반영한 heuristic + LLM rerank로 선택
+  - similarity는 title 외에 concept id, alias, caption, slide body, research metadata까지 반영하도록 확장
+  - synthetic validation에서 예전 로직 기준 첫 clear 후보는 `scarcity`였지만, 새 로직은 `money-functions -> inflation` 다음 흐름으로 `saving-and-interest`를 선택
+  - production runtime은 `PUBLIC_BASE_URL`이 낡았더라도 Vercel production domain fallback을 우선 보도록 보강
