@@ -14,8 +14,8 @@
 
 ## Current Snapshot
 - Product phase: production end-to-end publish 검증 완료
-- Current focus: 실제 게시 결과를 바탕으로 카드 디자인 보정과 운영 자동화 안정화
-- Biggest risk: 디자인 완성도 최종 조정, Instagram token 수명 관리, 스케줄러 운영 정책
+- Current focus: `insta-econ-fzr1` 운영 배포 기준 정리와 실제 게시 흐름 재검증
+- Biggest risk: `PUBLIC_BASE_URL`와 운영 도메인 불일치, 디자인 완성도 최종 조정, Instagram token 수명 관리
 
 ## Completed
 - [done] 카드뉴스 생성 UI와 기본 파이프라인 구성
@@ -64,16 +64,20 @@
 - [done] production Playwright PNG 렌더에 임베드 한글 폰트를 주입해 실제 게시본 텍스트 깨짐 문제 수정
 - [done] publish 직전에 Instagram preflight를 강제해 만료 토큰/권한/공개 PNG URL 문제를 먼저 차단
 - [done] Graph API Explorer 임시 토큰 대신 Page access token 운영 가이드를 `docs/instagram-token-playbook.md`에 추가
+- [done] GitHub `main` 브랜치와 Vercel `insta-econ-fzr1` 프로젝트를 연결하고 최신 앱 코드를 push
+- [done] `insta-econ-fzr1` 배포에서 새 `INSTAGRAM_PAGE_ACCESS_TOKEN`이 인식되고 Instagram account probe가 성공하는 것 확인
 
 ## In Progress
-- [doing] 수정된 렌더를 production에 반영하고 재게시 검증
+- [doing] 활성 운영 도메인을 `insta-econ-fzr1` 기준으로 맞추고 `PUBLIC_BASE_URL`까지 정렬
+- [doing] 수정된 렌더와 새 page token 기준으로 재게시 검증
 - [doing] 장기 토큰 기반 운영 흐름과 재인증 절차 정리
 
 ## Next Up
-1. 수정된 렌더를 production에 배포하고 새 run으로 이미지 승인/게시를 다시 검증
-2. Instagram token 만료 감지와 사전 알림 로직 추가
-3. publish recovery를 운영 UI에서 처리할지 여부 결정
-4. 두 번째 production publish까지 확인한 뒤 scheduler 자동화 재개
+1. `insta-econ-fzr1`의 `PUBLIC_BASE_URL`을 실제 운영 도메인으로 맞추고 production preflight를 다시 확인
+2. 새 run으로 이미지 승인/게시를 다시 검증
+3. Instagram token 만료 감지와 사전 알림 로직 추가
+4. publish recovery를 운영 UI에서 처리할지 여부 결정
+5. 두 번째 production publish까지 확인한 뒤 scheduler 자동화 재개
 
 ## Backlog
 - [todo] 운영 UI에서 stale run 목록과 수동 정리 기능 보강
@@ -89,7 +93,9 @@
 ## Notes
 - 로컬 개발에서는 `.data` 구조를 계속 사용
 - Vercel에서는 `BLOB_READ_WRITE_TOKEN`이 있으면 run 상태, artifact, history, dispatch lock을 Blob으로 저장
-- Telegram webhook은 `https://insta-econ.vercel.app/api/telegram/webhook` 사용
+- 활성 운영 Vercel 프로젝트는 `insta-econ-fzr1`
+- 활성 운영 도메인은 현재 `https://insta-econ-fzr1.vercel.app`
+- `PUBLIC_BASE_URL`, Telegram webhook, 공개 슬라이드 URL은 위 도메인 기준으로 맞춰야 함
 - operator API는 `OPERATOR_API_SECRET` 또는 fallback `RESEARCH_DISPATCH_SECRET`로 보호
 - 2026-03-20 production 검증 결과:
   - 새 page access token 반영 완료
@@ -112,3 +118,7 @@
 - 2026-03-22 token 운영 보강:
   - publish workflow가 실제 업로드 전에 `/api/instagram/preflight` 수준의 readiness 검사를 통과해야만 진행되도록 변경
   - token/권한 오류면 재시도보다 `manual_fix_required`로 멈추고 Graph API Explorer 임시 토큰 대신 Page access token 교체 안내를 남김
+- 2026-03-23 GitHub/Vercel 정리:
+  - `main`에 최신 앱 코드 `70950e0`를 push했고 `insta-econ-fzr1`가 더 이상 기본 Next 앱이 아닌 실제 앱을 서빙하는 것 확인
+  - `insta-econ-fzr1`의 `/api/instagram/preflight`에서 새 `INSTAGRAM_PAGE_ACCESS_TOKEN`과 `@borii_econ` account probe 성공 확인
+  - 현재 남은 운영 경고는 `PUBLIC_BASE_URL`이 예전 도메인으로 남아 있는 점
