@@ -151,6 +151,18 @@ function getPendingWorkflowStatus(approvalType: ApprovalTarget): WorkflowStatus 
   return approvalType === "script" ? "script_pending_approval" : "image_pending_approval";
 }
 
+function getRunRevisionRequest(run: RunState) {
+  if (run.image_approval.status === "rejected") {
+    return trimHistoryText(run.image_approval.response_text, 1000);
+  }
+
+  if (run.script_approval.status === "rejected") {
+    return trimHistoryText(run.script_approval.response_text, 1000);
+  }
+
+  return null;
+}
+
 function appendApprovalHistory(
   current: RunState,
   entry: Omit<ApprovalHistoryEntry, "id">,
@@ -468,7 +480,11 @@ export async function processRun(runId: string) {
         "중학생용 카드뉴스 카피 구조를 만드는 중",
       );
       await assertRunIsActive(runId);
-      let project = await buildCarouselProject(sourceBundle, run.title);
+      let project = await buildCarouselProject(
+        sourceBundle,
+        run.title,
+        getRunRevisionRequest(run),
+      );
       await writeArtifact(runId, "project.json", JSON.stringify(project, null, 2));
       await endStage(runId, "contents-marketer", "8장 카드뉴스 초안을 만들었어요.");
 

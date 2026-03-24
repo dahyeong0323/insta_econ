@@ -916,6 +916,7 @@ ${input.extractedText}`,
 export async function buildCarouselProject(
   bundle: SourceBundle,
   title?: string | null,
+  revisionRequest?: string | null,
 ) {
   const fallback = buildFallbackProject(bundle);
   const client = getOpenAIClient();
@@ -928,7 +929,7 @@ export async function buildCarouselProject(
     const copyResponse = await client.responses.parse({
       model: getTextModel(),
       instructions: `${contentMarketerInstructions()}\n${getAudienceInstructions("middle_school")}`,
-      input: contentInput(bundle, title),
+      input: contentInput(bundle, title, revisionRequest),
       text: {
         format: zodTextFormat(copyDeckSchema, "copy_deck"),
       },
@@ -940,7 +941,7 @@ export async function buildCarouselProject(
     const designResponse = await client.responses.parse({
       model: getTextModel(),
       instructions: designerInstructions(),
-      input: designerInput(bundle, copyDeck),
+      input: designerInput(bundle, copyDeck, revisionRequest),
       text: {
         format: zodTextFormat(designDeckSchema, "design_deck"),
       },

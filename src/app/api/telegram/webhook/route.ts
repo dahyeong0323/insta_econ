@@ -521,7 +521,7 @@ export async function POST(request: Request) {
     }
 
     if (command.action === "revise") {
-      await respondToRunApproval(run.id, {
+      const decisionRun = await respondToRunApproval(run.id, {
         approvalType,
         decision: "rejected",
         approver: "telegram-operator",
@@ -530,6 +530,8 @@ export async function POST(request: Request) {
         chatId,
         telegramMessageId: replyMessageIdText,
       });
+
+      await scheduleApprovedWorkflow(decisionRun, chatId);
 
       await sendSafeTelegramText(
         chatId,

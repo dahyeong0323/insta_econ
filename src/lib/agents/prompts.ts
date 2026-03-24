@@ -138,10 +138,15 @@ Goals:
 - Return only the repaired slides requested.`;
 }
 
-export function contentInput(bundle: SourceBundle, title?: string | null) {
+export function contentInput(
+  bundle: SourceBundle,
+  title?: string | null,
+  revisionRequest?: string | null,
+) {
   return `Create an 8-slide Korean economics card-news deck.
 
 Optional user title: ${title || "none"}
+Operator revision request: ${revisionRequest || "none"}
 
 Story architecture requirements:
 - The whole deck should explain one economic term or one tightly bounded concept.
@@ -157,8 +162,15 @@ ${JSON.stringify(bundle, null, 2)}
 `;
 }
 
-export function designerInput(bundle: SourceBundle, draft: object) {
+export function designerInput(
+  bundle: SourceBundle,
+  draft: object,
+  revisionRequest?: string | null,
+) {
   return `Assign visual tones and bottom modules to this 8-slide draft.
+
+Operator revision request:
+${revisionRequest || "none"}
 
 Source bundle:
 ${JSON.stringify(bundle, null, 2)}
