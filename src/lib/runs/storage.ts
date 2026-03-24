@@ -310,6 +310,8 @@ export async function findRunByTelegramMessageId(messageId: string) {
         run.image_approval.telegram_message_id === messageId ||
         run.telegram.script_message_id === messageId ||
         run.telegram.image_message_id === messageId ||
+        run.telegram.script_reply_message_id === messageId ||
+        run.telegram.image_reply_message_id === messageId ||
         run.telegram.publish_control_message_id === messageId
       ) {
         return run;

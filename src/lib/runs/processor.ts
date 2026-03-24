@@ -123,6 +123,10 @@ function getTelegramMessageKey(approvalType: ApprovalTarget) {
   return approvalType === "script" ? "script_message_id" : "image_message_id";
 }
 
+function getTelegramReplyMessageKey(approvalType: ApprovalTarget) {
+  return approvalType === "script" ? "script_reply_message_id" : "image_reply_message_id";
+}
+
 function getWorkflowStatusForApprovalRequest(approvalType: ApprovalTarget): WorkflowStatus {
   return approvalType === "script" ? "script_pending_approval" : "image_pending_approval";
 }
@@ -393,6 +397,8 @@ export async function createRunRecord(payload: {
       last_chat_id: null,
       script_message_id: null,
       image_message_id: null,
+      script_reply_message_id: null,
+      image_reply_message_id: null,
       publish_control_message_id: null,
     },
     script_approval: createIdleApprovalState(),
@@ -611,6 +617,7 @@ export async function requestRunApproval(runId: string, payload: RequestApproval
 
     const approvalKey = getApprovalKey(parsed.approvalType);
     const telegramMessageKey = getTelegramMessageKey(parsed.approvalType);
+    const telegramReplyMessageKey = getTelegramReplyMessageKey(parsed.approvalType);
     const requestedAt = now();
 
     const nextApproval: ApprovalState = {
@@ -641,10 +648,34 @@ export async function requestRunApproval(runId: string, payload: RequestApproval
       telegram: {
         ...current.telegram,
         last_chat_id: parsed.chatId?.trim() || current.telegram.last_chat_id,
+        [telegramReplyMessageKey]: null,
         [telegramMessageKey]:
           parsed.telegramMessageId?.trim() || current.telegram[telegramMessageKey],
       },
       error: null,
+    };
+  });
+}
+
+export async function recordApprovalReplyPrompt(
+  runId: string,
+  payload: {
+    approvalType: ApprovalTarget;
+    chatId?: string | null;
+    telegramMessageId?: string | null;
+  },
+) {
+  return patchRun(runId, (current) => {
+    const telegramReplyMessageKey = getTelegramReplyMessageKey(payload.approvalType);
+
+    return {
+      ...current,
+      telegram: {
+        ...current.telegram,
+        last_chat_id: payload.chatId?.trim() || current.telegram.last_chat_id,
+        [telegramReplyMessageKey]:
+          payload.telegramMessageId?.trim() || current.telegram[telegramReplyMessageKey],
+      },
     };
   });
 }
@@ -659,6 +690,7 @@ export async function respondToRunApproval(runId: string, payload: RespondApprov
 
     const approvalKey = getApprovalKey(parsed.approvalType);
     const telegramMessageKey = getTelegramMessageKey(parsed.approvalType);
+    const telegramReplyMessageKey = getTelegramReplyMessageKey(parsed.approvalType);
     const currentApproval = current[approvalKey];
     const respondedAt = now();
     const messageId = parsed.telegramMessageId?.trim() || currentApproval.telegram_message_id;
@@ -702,6 +734,7 @@ export async function respondToRunApproval(runId: string, payload: RespondApprov
       telegram: {
         ...current.telegram,
         last_chat_id: parsed.chatId?.trim() || current.telegram.last_chat_id,
+        [telegramReplyMessageKey]: null,
         [telegramMessageKey]: messageId ?? current.telegram[telegramMessageKey],
       },
       error: null,
@@ -724,6 +757,7 @@ export async function recordRunApprovalAction(
   return patchRun(runId, (current) => {
     const approvalKey = getApprovalKey(payload.approvalType);
     const telegramMessageKey = getTelegramMessageKey(payload.approvalType);
+    const telegramReplyMessageKey = getTelegramReplyMessageKey(payload.approvalType);
     const currentApproval = current[approvalKey];
     const occurredAt = now();
     const messageId = payload.telegramMessageId?.trim() || currentApproval.telegram_message_id;
@@ -756,6 +790,7 @@ export async function recordRunApprovalAction(
         telegram: {
           ...current.telegram,
           last_chat_id: payload.chatId?.trim() || current.telegram.last_chat_id,
+          [telegramReplyMessageKey]: null,
           [telegramMessageKey]: messageId ?? current.telegram[telegramMessageKey],
         },
         error: null,
@@ -796,6 +831,7 @@ export async function recordRunApprovalAction(
       telegram: {
         ...current.telegram,
         last_chat_id: payload.chatId?.trim() || current.telegram.last_chat_id,
+        [telegramReplyMessageKey]: null,
         [telegramMessageKey]: messageId ?? current.telegram[telegramMessageKey],
       },
       error: note,

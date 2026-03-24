@@ -118,6 +118,8 @@ const telegramDeliveryDefaults = {
   last_chat_id: null,
   script_message_id: null,
   image_message_id: null,
+  script_reply_message_id: null,
+  image_reply_message_id: null,
   publish_control_message_id: null,
 };
 
@@ -320,6 +322,16 @@ export const telegramDeliverySchema = z
       .max(120)
       .nullable()
       .default(telegramDeliveryDefaults.image_message_id),
+    script_reply_message_id: z
+      .string()
+      .max(120)
+      .nullable()
+      .default(telegramDeliveryDefaults.script_reply_message_id),
+    image_reply_message_id: z
+      .string()
+      .max(120)
+      .nullable()
+      .default(telegramDeliveryDefaults.image_reply_message_id),
     publish_control_message_id: z
       .string()
       .max(120)

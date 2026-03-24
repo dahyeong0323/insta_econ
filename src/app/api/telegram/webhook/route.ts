@@ -7,13 +7,14 @@ import {
 } from "@/lib/integrations/telegram/client";
 import {
   parseTelegramApprovalButton,
-  parseTelegramCommand,
   parseTelegramPublishControlButton,
 } from "@/lib/integrations/telegram/messages";
+import { parseTelegramCommand } from "@/lib/integrations/telegram/command-parser";
 import { shouldAutoPublishOnImageApproval } from "@/lib/runs/publish";
 import { continueApprovedRunWorkflow } from "@/lib/runs/continuation";
 import {
   recordRunApprovalAction,
+  recordApprovalReplyPrompt,
   recordRunSoftError,
   respondToRunApproval,
   stopRunPublish,
@@ -60,6 +61,12 @@ function getApprovalMessageId(run: RunState, approvalType: "script" | "image") {
     : run.image_approval.telegram_message_id ?? run.telegram.image_message_id;
 }
 
+function getApprovalReplyMessageId(run: RunState, approvalType: "script" | "image") {
+  return approvalType === "script"
+    ? run.telegram.script_reply_message_id
+    : run.telegram.image_reply_message_id;
+}
+
 function resolveTelegramReplyContext(
   run: RunState,
   messageId: string,
@@ -77,7 +84,21 @@ function resolveTelegramReplyContext(
     };
   }
 
+  if (getApprovalReplyMessageId(run, "script") === messageId) {
+    return {
+      kind: "approval",
+      approvalType: "script",
+    };
+  }
+
   if (getApprovalMessageId(run, "image") === messageId) {
+    return {
+      kind: "approval",
+      approvalType: "image",
+    };
+  }
+
+  if (getApprovalReplyMessageId(run, "image") === messageId) {
     return {
       kind: "approval",
       approvalType: "image",
@@ -109,21 +130,21 @@ async function sendSafeTelegramText(chatId: string | null, text: string) {
 
 function buildApprovalAcceptedMessage(runId: string, approvalType: "script" | "image") {
   if (approvalType === "script") {
-    return `초안 승인 완료\nrun: ${runId}\n이제 카드뉴스 생성 파이프라인을 이어서 진행합니다.`;
+    return `Script approved\nrun: ${runId}\nStarting the render pipeline now.`;
   }
 
   if (shouldAutoPublishOnImageApproval()) {
-    return `이미지 승인 완료\nrun: ${runId}\n이제 게시 흐름을 이어서 진행합니다.`;
+    return `Images approved\nrun: ${runId}\nStarting the publish flow now.`;
   }
 
-  return `이미지 승인 완료\nrun: ${runId}\n게시 준비 완료로 기록했어요. 운영 화면에서 게시를 시작해 주세요.`;
+  return `Images approved\nrun: ${runId}\nSaved as ready to publish. Start publish from the operator screen.`;
 }
 
 function buildContinuationFailureMessage(runId: string, error: unknown) {
   const detail = error instanceof Error ? error.message : "Unknown continuation error";
   return {
-    record: `승인 후 다음 단계 자동 시작 실패: ${detail}`,
-    notify: `승인은 기록됐지만 자동 진행 시작에 실패했어요.\nrun: ${runId}\n사유: ${detail}`,
+    record: `Approval continuation failed: ${detail}`, 
+    notify: `Approval was saved, but the next step failed to start.\nrun: ${runId}\nReason: ${detail}`, 
   };
 }
 
@@ -138,7 +159,7 @@ async function scheduleApprovedWorkflow(run: RunState, chatId: string | null) {
 }
 
 async function triggerTelegramPublishRetry(runId: string, chatId: string) {
-  await sendSafeTelegramText(chatId, `게시 재시도를 시작합니다.\nrun: ${runId}`);
+  await sendSafeTelegramText(chatId, `Starting publish retry.\nrun: ${runId}`);
 
   after(async () => {
     try {
@@ -148,12 +169,12 @@ async function triggerTelegramPublishRetry(runId: string, chatId: string) {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown publish retry error";
-      await recordRunSoftError(runId, `게시 재시도 시작 실패: ${detail}`, {
+      await recordRunSoftError(runId, `Publish retry failed to start: ${detail}`, {
         publishResultError: true,
       }).catch(() => undefined);
       await sendSafeTelegramText(
         chatId,
-        `게시 재시도를 시작하지 못했어요.\nrun: ${runId}\n사유: ${detail}`,
+        `Could not start publish retry.\nrun: ${runId}\nReason: ${detail}`, 
       );
     }
   });
@@ -167,7 +188,7 @@ async function triggerTelegramPublishStop(runId: string, chatId: string, reason:
 
   await sendSafeTelegramText(
     chatId,
-    `게시 중단 기록 완료\nrun: ${stoppedRun.id}\n이번 게시 재시도는 더 이상 진행하지 않겠습니다.`,
+    `Publish stop recorded.\nrun: ${stoppedRun.id}\nThis publish attempt will not continue.`, 
   );
 }
 
@@ -193,7 +214,7 @@ async function handlePublishControlCallback(
   if (!run || !chatId) {
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
-      text: "run 정보를 찾지 못했어요.",
+      text: "Run info not found.",
     }).catch(() => undefined);
 
     return NextResponse.json({ ok: true, ignored: "run_not_found" });
@@ -206,7 +227,7 @@ async function handlePublishControlCallback(
   ) {
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
-      text: "이미 처리됐거나 지금 상태와 맞지 않는 버튼입니다.",
+      text: "This button does not match the current publish state.",
     }).catch(() => undefined);
 
     return NextResponse.json({
@@ -219,7 +240,7 @@ async function handlePublishControlCallback(
   if (action === "retry") {
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
-      text: "게시 재시도를 시작할게요.",
+      text: "Starting publish retry.",
     }).catch(() => undefined);
 
     await triggerTelegramPublishRetry(run.id, chatId);
@@ -228,10 +249,10 @@ async function handlePublishControlCallback(
 
   await answerTelegramCallbackQuery({
     callbackQueryId: callbackId,
-    text: "이번 게시 중단으로 기록했어요.",
+    text: "Publish stop recorded.",
   }).catch(() => undefined);
 
-  await triggerTelegramPublishStop(run.id, chatId, "텔레그램 운영자가 이번 게시를 중단했어요.");
+  await triggerTelegramPublishStop(run.id, chatId, "Telegram operator stopped this publish attempt.");
   return NextResponse.json({ ok: true, action: "publish_stop", runId: run.id });
 }
 
@@ -260,7 +281,7 @@ async function handleApprovalCallback(
   if (!run || !chatId) {
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
-      text: "run 정보를 찾지 못했어요.",
+      text: "Run info not found.",
     }).catch(() => undefined);
 
     return NextResponse.json({ ok: true, ignored: "run_not_found" });
@@ -276,7 +297,7 @@ async function handleApprovalCallback(
   ) {
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
-      text: "이미 처리됐거나 지금 단계와 맞지 않는 버튼입니다.",
+      text: "This button does not match the current approval state.",
     }).catch(() => undefined);
 
     return NextResponse.json({ ok: true, ignored: "stale_button", runId: run.id });
@@ -299,8 +320,8 @@ async function handleApprovalCallback(
       callbackQueryId: callbackId,
       text:
         callbackData.approvalType === "script"
-          ? "초안 승인으로 기록했어요."
-          : "이미지 승인으로 기록했어요.",
+          ? "Script approval recorded."
+          : "Image approval recorded.",
     }).catch(() => undefined);
 
     await sendSafeTelegramText(
@@ -314,18 +335,28 @@ async function handleApprovalCallback(
   if (callbackData.action === "revise") {
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
-      text: "수정 요청 내용은 답장으로 보내 주세요.",
+      text: "Send the revision request as a reply.",
     }).catch(() => undefined);
 
-    await sendSafeTelegramText(
+    const promptMessage = await sendTelegramTextMessage({
       chatId,
-      callbackData.approvalType === "script"
-        ? `초안 수정 요청 대기\nrun: ${run.id}\n이 메시지에 답장으로 \`수정: 원하는 수정사항\` 형식으로 보내 주세요.`
-        : `이미지 수정 요청 대기\nrun: ${run.id}\n이 메시지에 답장으로 \`수정: 원하는 수정사항\` 형식으로 보내 주세요.`,
-    );
+      text:
+        callbackData.approvalType === "script"
+          ? `Script revision requested\nrun: ${run.id}\nReply to this helper message using \`revise: your feedback\`.`
+          : `Image revision requested\nrun: ${run.id}\nReply to this helper message using \`revise: your feedback\`.`,
+    }).catch(() => null);
+
+    if (promptMessage?.messageId) {
+      await recordApprovalReplyPrompt(run.id, {
+        approvalType: callbackData.approvalType,
+        chatId: promptMessage.chatId,
+        telegramMessageId: promptMessage.messageId,
+      });
+    }
 
     return NextResponse.json({ ok: true, action: "revise_prompt", runId: run.id });
   }
+
 
   const actionRun = await recordRunApprovalAction(run.id, {
     approvalType: callbackData.approvalType,
@@ -341,15 +372,15 @@ async function handleApprovalCallback(
     callbackQueryId: callbackId,
     text:
       callbackData.action === "hold"
-        ? "보류 상태로 유지할게요."
-        : "이번 건은 스킵으로 기록할게요.",
+        ? "Hold recorded."
+        : "Skip recorded.",
   }).catch(() => undefined);
 
   await sendSafeTelegramText(
     chatId,
     callbackData.action === "hold"
-      ? `보류 이력을 남겼어요.\nrun: ${actionRun.id}\n현재 승인 대기 상태를 유지합니다.`
-      : `스킵으로 기록했어요.\nrun: ${actionRun.id}\n이 run은 종료되고, 필요하면 다른 주제로 새 초안을 만들 수 있습니다.`,
+      ? `Hold recorded.\nrun: ${actionRun.id}\nThe approval stays pending.`
+      : `Skip recorded.\nrun: ${actionRun.id}\nThis run is closed. You can create a new draft with another topic if needed.`,
   );
 
   return NextResponse.json({
@@ -394,7 +425,7 @@ export async function POST(request: Request) {
     if (!run) {
       await sendSafeTelegramText(
         chatId,
-        "어느 run에 대한 답장인지 찾지 못했어요. 원본 메시지에 답장하는 형태로 다시 보내 주세요.",
+        "Could not find which run this reply belongs to. Reply to the original request message and try again.",
       );
 
       return NextResponse.json({ ok: true, ignored: "run_not_found" });
@@ -408,7 +439,7 @@ export async function POST(request: Request) {
       if (!pendingPublishControl || replyContext?.kind !== "publish_control") {
         await sendSafeTelegramText(
           chatId,
-          `지금은 publish 제어를 받을 상태가 아니에요.\nrun: ${run.id}`,
+          `This run is not waiting for publish control.\nrun: ${run.id}`, 
         );
 
         return NextResponse.json({
@@ -426,7 +457,7 @@ export async function POST(request: Request) {
       await triggerTelegramPublishStop(
         run.id,
         chatId,
-        "텔레그램 운영자가 텍스트 명령으로 이번 게시를 중단했어요.",
+        "Telegram operator stopped this publish attempt with a text command.",
       );
 
       return NextResponse.json({ ok: true, action: "publish_stop", runId: run.id });
@@ -435,7 +466,7 @@ export async function POST(request: Request) {
     if (replyContext?.kind !== "approval") {
       await sendSafeTelegramText(
         chatId,
-        "최신 승인 요청 메시지에 답장하거나 버튼을 눌러 주세요.",
+        "Reply to the latest approval request message, or use the button on that message.",
       );
 
       return NextResponse.json({ ok: true, ignored: "stale_reply", runId: run.id });
@@ -447,7 +478,7 @@ export async function POST(request: Request) {
     if (currentApproval.status !== "pending") {
       await sendSafeTelegramText(
         chatId,
-        "이미 처리됐거나 최신 승인 요청이 아니에요. 가장 최근 메시지에서 다시 진행해 주세요.",
+        "This approval is already handled or is no longer the latest pending request.",
       );
 
       return NextResponse.json({ ok: true, ignored: "no_pending_approval" });
@@ -462,8 +493,8 @@ export async function POST(request: Request) {
         await sendSafeTelegramText(
           chatId,
           approvalType === "script"
-            ? "이 초안 요청은 `OK` 또는 버튼으로 승인해 주세요."
-            : "이 이미지 요청은 `IMAGE OK`, `PUBLISH OK`, 또는 버튼으로 승인해 주세요.",
+            ? "Approve this script with `OK` or the button on the message."
+            : "Approve this image set with `IMAGE OK`, `PUBLISH OK`, or the button on the message.",
         );
 
         return NextResponse.json({
@@ -502,7 +533,7 @@ export async function POST(request: Request) {
 
       await sendSafeTelegramText(
         chatId,
-        `수정 요청으로 기록했어요.\nrun: ${run.id}\n피드백: ${command.feedback}`,
+        `Revision request recorded.\nrun: ${run.id}\nFeedback: ${command.feedback}`, 
       );
 
       return NextResponse.json({ ok: true, action: "revise", runId: run.id });
@@ -522,8 +553,8 @@ export async function POST(request: Request) {
       await sendSafeTelegramText(
         chatId,
         command.action === "hold"
-          ? `보류 이력을 남겼어요.\nrun: ${actionRun.id}\n현재 승인 대기 상태를 유지합니다.`
-          : `스킵으로 기록했어요.\nrun: ${actionRun.id}\n이 run은 종료되고, 필요하면 다른 주제로 새 초안을 만들 수 있습니다.`,
+          ? `Hold recorded.\nrun: ${actionRun.id}\nThe approval stays pending.`
+          : `Skip recorded.\nrun: ${actionRun.id}\nThis run is closed. You can create a new draft with another topic if needed.`, 
       );
 
       return NextResponse.json({
@@ -535,7 +566,7 @@ export async function POST(request: Request) {
 
     await sendSafeTelegramText(
       chatId,
-      "명령을 이해하지 못했어요.\n버튼을 누르거나 `OK`, `수정: ...`, `보류`, `스킵` 형식으로 보내 주세요.",
+      "Command not understood. Use the button, or reply with `OK`, `revise: ...`, `hold`, or `skip`.",
     );
 
     return NextResponse.json({ ok: true, action: "unknown", runId: run.id });
