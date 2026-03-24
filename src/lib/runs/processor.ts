@@ -163,6 +163,10 @@ function getRunRevisionRequest(run: RunState) {
   return null;
 }
 
+function getQaRepairPasses(run: RunState) {
+  return getRunRevisionRequest(run) ? 4 : 2;
+}
+
 function appendApprovalHistory(
   current: RunState,
   entry: Omit<ApprovalHistoryEntry, "id">,
@@ -505,7 +509,7 @@ export async function processRun(runId: string) {
         "내용, 길이, 근거, 모듈 구성을 검수하고 필요하면 자동 수정하는 중",
       );
       await assertRunIsActive(runId);
-      const qaLoop = await qaReviewAndRepair(sourceBundle, project, 2);
+      const qaLoop = await qaReviewAndRepair(sourceBundle, project, getQaRepairPasses(run));
       project = qaLoop.project;
 
       await writeProjectArtifacts(runId, sourceBundle, project);

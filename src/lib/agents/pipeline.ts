@@ -361,6 +361,81 @@ function hasTimelineAlignmentRisk(slide: RawSlide | Slide) {
   return min > 0 && max / min > 2.2;
 }
 
+function getChecklistLabel(label: string | null | undefined, index: number) {
+  const normalized = sanitizeReaderText(label)?.trim();
+
+  if (normalized && !/^\d+$/u.test(normalized)) {
+    return shortenText(normalized, 1, 12);
+  }
+
+  return `포인트 ${index + 1}`;
+}
+
+function convertModuleToChecklist(slide: RawSlide) {
+  const title =
+    sanitizeReaderText(slide.module.title) ||
+    sanitizeReaderText(slide.headline) ||
+    "핵심 정리";
+  const items =
+    slide.module.items.length > 0
+      ? slide.module.items
+      : [
+        {
+          label: "포인트 1",
+          title: sanitizeReaderText(slide.emphasis) || sanitizeReaderText(slide.headline) || "핵심",
+          value:
+            sanitizeReaderText(slide.save_point) ||
+            sanitizeReaderText(slide.body) ||
+            "핵심 설명을 다시 정리해 주세요.",
+          note: null,
+          accent: "orange" as const,
+        },
+      ];
+
+  return {
+    ...slide,
+    module: {
+      ...slide.module,
+      type: "checklist-table" as const,
+      title: shortenText(title, 1, 48),
+      footer: slide.module.footer ? shortenText(slide.module.footer, 1, 78) : null,
+      items: items.slice(0, 4).map((item, index) => ({
+        ...item,
+        label: getChecklistLabel(item.label, index),
+        title: shortenText(
+          sanitizeReaderText(item.title) || sanitizeReaderText(item.label) || `핵심 ${index + 1}`,
+          1,
+          24,
+        ),
+        value: shortenText(
+          sanitizeReaderText(item.value) ||
+            sanitizeReaderText(item.note) ||
+            sanitizeReaderText(slide.body) ||
+            "핵심 설명을 다시 정리해 주세요.",
+          1,
+          40,
+        ),
+        note: item.note ? shortenText(item.note, 1, 44) : null,
+        accent: item.accent ?? "orange",
+      })),
+    },
+  };
+}
+
+function applySafeModuleFallbacks(slide: RawSlide) {
+  let next = slide;
+
+  if (hasWeakNumberSpotlight(next)) {
+    next = convertModuleToChecklist(next);
+  }
+
+  if (hasTimelineAlignmentRisk(next) || hasDenseTimeline(next)) {
+    next = convertModuleToChecklist(next);
+  }
+
+  return next;
+}
+
 function coerceModuleForRole(slide: RawSlide): RawSlide {
   if (slide.slide_number === 1 || slide.slide_number === 8) {
     return slide;
@@ -421,7 +496,7 @@ function normalizeSlide(slide: RawSlide, index: number) {
       ? normalizeClosingSlide(baseSlide)
       : baseSlide;
 
-  return normalizeNumberModule(coerceModuleForRole(normalized));
+  return applySafeModuleFallbacks(normalizeNumberModule(coerceModuleForRole(normalized)));
 }
 
 function normalizeProject(project: RawProject) {
@@ -706,16 +781,7 @@ function heuristicRepairSlide(slide: Slide, bundle: SourceBundle) {
     next = normalizeClosingSlide(next);
   }
 
-  next = normalizeNumberModule(next);
-  next = coerceModuleForRole(next);
-
-  if (hasWeakNumberSpotlight(next)) {
-    next.module = {
-      ...next.module,
-      type: "checklist-table",
-    };
-    next = coerceModuleForRole(next);
-  }
+  next = applySafeModuleFallbacks(normalizeNumberModule(coerceModuleForRole(next)));
 
   if (isVisuallyCrowded(next)) {
     next.body = shortenText(next.body, 2, 180);

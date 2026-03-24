@@ -149,3 +149,6 @@
   - checklist table hierarchy를 키우고 숫자 라벨 중복을 숨기도록 조정
   - QA에 timeline 비대칭, checklist 숫자 위계 약화, weak number spotlight 검출을 추가
   - local validation: `npm run typecheck`, `npm run lint`, `npm run build` 통과
+- 2026-03-24 revision rerender hardening:
+  - image revise reply now auto-triggers process continuation and passes operator feedback into copy/design prompts
+  - QA repair now gives revision rerenders more passes and converts risky timeline / weak spotlight modules into safer checklist-table layouts before resending
