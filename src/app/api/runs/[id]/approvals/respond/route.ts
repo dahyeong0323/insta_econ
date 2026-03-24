@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 import { continueApprovedRunWorkflow } from "@/lib/runs/continuation";
 import { recordRunSoftError, respondToRunApproval } from "@/lib/runs/processor";
@@ -21,16 +21,14 @@ export async function POST(
     const payload = await request.json();
     const run = await respondToRunApproval(id, payload);
 
-    after(async () => {
-      try {
-        await continueApprovedRunWorkflow(run);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : "Unknown continuation error";
-        await recordRunSoftError(run.id, `승인 후 다음 단계 자동 시작 실패: ${detail}`).catch(
-          () => undefined,
-        );
-      }
-    });
+    try {
+      await continueApprovedRunWorkflow(run);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown continuation error";
+      await recordRunSoftError(run.id, `Approval continuation failed: ${detail}`).catch(
+        () => undefined,
+      );
+    }
 
     return NextResponse.json(run);
   } catch (error) {

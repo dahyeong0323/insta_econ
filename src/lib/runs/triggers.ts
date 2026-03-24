@@ -40,6 +40,26 @@ export async function triggerRunProcessing(runId: string) {
   if (!response.ok) {
     throw new Error(`Failed to trigger run processing: ${response.status}`);
   }
+
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        run?: {
+          workflow_status?: string | null;
+          telegram?: { last_chat_id?: string | null };
+          script_approval?: { channel?: string | null };
+        };
+      }
+    | null;
+
+  const run = payload?.run;
+
+  if (
+    run?.workflow_status === "image_pending_approval" &&
+    run.telegram?.last_chat_id &&
+    run.script_approval?.channel === "telegram"
+  ) {
+    await triggerRunTelegramImageSend(runId);
+  }
 }
 
 export async function triggerRunPublish(runId: string, payload: PublishRunInput) {
@@ -51,5 +71,17 @@ export async function triggerRunPublish(runId: string, payload: PublishRunInput)
 
   if (!response.ok) {
     throw new Error(`Failed to trigger run publish: ${response.status}`);
+  }
+}
+
+export async function triggerRunTelegramImageSend(runId: string) {
+  const response = await fetch(`${getAppBaseUrl()}/api/runs/${runId}/telegram/send-images`, {
+    method: "POST",
+    headers: buildInternalHeaders(),
+    body: "{}",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to trigger Telegram image send: ${response.status}`);
   }
 }

@@ -127,16 +127,14 @@ function buildContinuationFailureMessage(runId: string, error: unknown) {
   };
 }
 
-function scheduleApprovedWorkflow(run: RunState, chatId: string | null) {
-  after(async () => {
-    try {
-      await continueApprovedRunWorkflow(run);
-    } catch (error) {
-      const failure = buildContinuationFailureMessage(run.id, error);
-      await recordRunSoftError(run.id, failure.record).catch(() => undefined);
-      await sendSafeTelegramText(chatId || run.telegram.last_chat_id, failure.notify);
-    }
-  });
+async function scheduleApprovedWorkflow(run: RunState, chatId: string | null) {
+  try {
+    await continueApprovedRunWorkflow(run);
+  } catch (error) {
+    const failure = buildContinuationFailureMessage(run.id, error);
+    await recordRunSoftError(run.id, failure.record).catch(() => undefined);
+    await sendSafeTelegramText(chatId || run.telegram.last_chat_id, failure.notify);
+  }
 }
 
 async function triggerTelegramPublishRetry(runId: string, chatId: string) {
@@ -295,7 +293,7 @@ async function handleApprovalCallback(
       telegramMessageId: expectedMessageId ?? undefined,
     });
 
-    scheduleApprovedWorkflow(decisionRun, chatId);
+    await scheduleApprovedWorkflow(decisionRun, chatId);
 
     await answerTelegramCallbackQuery({
       callbackQueryId: callbackId,
@@ -485,7 +483,7 @@ export async function POST(request: Request) {
         telegramMessageId: replyMessageIdText,
       });
 
-      scheduleApprovedWorkflow(decisionRun, chatId);
+      await scheduleApprovedWorkflow(decisionRun, chatId);
 
       await sendSafeTelegramText(chatId, buildApprovalAcceptedMessage(decisionRun.id, approvalType));
       return NextResponse.json({ ok: true, action: "approved", runId: run.id });
