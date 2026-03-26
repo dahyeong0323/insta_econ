@@ -18,10 +18,16 @@ const stageMeta: Record<
     summary: "텍스트와 PDF에서 팩트, 숫자, 핵심 용어를 추출합니다.",
     color: "bg-[#ff6b35]",
   },
+  "content-planner": {
+    label: "content-planner",
+    title: "디자인 플랜 설계",
+    summary: "슬라이드 역할, 감정 곡선, 레이아웃 패턴을 먼저 결정합니다.",
+    color: "bg-[#ff9d45]",
+  },
   "contents-marketer": {
     label: "contents-marketer",
     title: "질문형 카피 설계",
-    summary: "중학생 눈높이의 8장 Q&A 카드 구조를 만듭니다.",
+    summary: "디자인 플랜에 맞춰 질문형 카피를 작성합니다.",
     color: "bg-[#5b8def]",
   },
   designer: {
@@ -36,11 +42,23 @@ const stageMeta: Record<
     summary: "standalone HTML과 export-ready 결과물을 만듭니다.",
     color: "bg-[#49d39a]",
   },
+  "qa-validator": {
+    label: "qa-validator",
+    title: "구조 validator",
+    summary: "design-plan, renderer, token, layout 규칙을 deterministic하게 검사합니다.",
+    color: "bg-[#f4b942]",
+  },
   "qa-reviewer": {
     label: "qa-reviewer",
-    title: "검수와 자동 수정",
-    summary: "내용, 길이, 모듈, 불필요한 문구를 검사하고 다시 고칩니다.",
+    title: "검수 리포트",
+    summary: "내용, 길이, 패턴, 모듈 밀도를 읽기 전용으로 검수합니다.",
     color: "bg-[#f57aa6]",
+  },
+  "qa-repair": {
+    label: "qa-repair",
+    title: "자동 수정 루프",
+    summary: "qa-reviewer가 찾은 문제 슬라이드만 다시 고칩니다.",
+    color: "bg-[#ef476f]",
   },
 };
 
@@ -85,7 +103,7 @@ function getHeadline(run: RunState | null) {
   }
 
   if (run.status === "completed") {
-    return "8장 카드뉴스 생성 완료";
+    return `${run.project?.slides.length ?? run.design_plan?.slides.length ?? "?"}장 카드뉴스 생성 완료`;
   }
 
   if (run.current_stage) {

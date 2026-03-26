@@ -19,6 +19,7 @@ import {
   RunStoppedError,
   startRunPublish,
 } from "@/lib/runs/processor";
+import { buildPublishFailurePolicy } from "@/lib/runs/publish-guide";
 import { renderRunSlidesToPng } from "@/lib/runs/render-png";
 import { readRunState, withRunLock } from "@/lib/runs/storage";
 
@@ -44,72 +45,17 @@ function getInstagramPublishRetryDelayMs() {
   return parsed;
 }
 
-function isRetryablePublishError(message: string) {
-  return /(fetch failed|network|timeout|timed out|temporar|try again|rate limit|too many requests|server error|502|503|504|500|econnreset|socket hang up)/i.test(
-    message,
-  );
-}
-
-function isInstagramTokenOrPermissionError(message: string) {
-  return /(access token|token|session has expired|invalid oauth|oauth|permissions? error|instagram account probe|page access token|user token|graph api explorer|insufficient permission)/i.test(
-    message,
-  );
-}
-
-function isInstagramAssetConfigurationError(message: string) {
-  return /(public base url|public slide probe|image\/png|image_url|unsupported image|base url|png url)/i.test(
-    message,
-  );
-}
-
-function buildPublishFailurePolicy(message: string, attemptNumber: number, maxRetries: number) {
-  if (isRetryablePublishError(message)) {
-    if (attemptNumber <= maxRetries) {
-      return {
-        retryable: true,
-        nextAction: "retrying" as const,
-        holdReason: null,
-      };
-    }
-
-    return {
-      retryable: true,
-      nextAction: "manual_retry" as const,
-      holdReason: `일시적 오류가 반복되어 자동 재시도 한도(${maxRetries})를 넘겼습니다.`,
-    };
-  }
-
-  if (isInstagramTokenOrPermissionError(message)) {
-    return {
-      retryable: false,
-      nextAction: "manual_fix_required" as const,
-      holdReason:
-        "Instagram 토큰 또는 권한이 유효하지 않습니다. Graph API Explorer 임시 토큰 대신 장기 사용자 토큰에서 만든 Page access token으로 INSTAGRAM_PAGE_ACCESS_TOKEN을 교체하고, /api/instagram/preflight가 ready인지 다시 확인하세요.",
-    };
-  }
-
-  if (isInstagramAssetConfigurationError(message)) {
-    return {
-      retryable: false,
-      nextAction: "manual_fix_required" as const,
-      holdReason:
-        "공개 slide PNG URL 또는 PUBLIC_BASE_URL 설정에 문제가 있습니다. /api/instagram/preflight에서 public slide probe가 ready인지 먼저 확인한 뒤 다시 게시하세요.",
-    };
-  }
-
-  return {
-    retryable: false,
-    nextAction: "manual_fix_required" as const,
-    holdReason:
-      "권한, 토큰, 공개 URL, 이미지 형식 같은 설정 문제일 가능성이 높아 수동 확인이 필요합니다.",
-  };
-}
-
 function wait(delayMs: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });
 }
+
+type PublishControlDeliveryResult =
+  | { status: "not_needed" }
+  | { status: "no_chat"; runId: string }
+  | { status: "sent"; runId: string; messageId: string }
+  | { status: "failed"; runId: string; error: string };
 
 async function notifyTelegramPublishControl(runId: string) {
   const run = await readRunState(runId).catch(() => null);
@@ -119,22 +65,44 @@ async function notifyTelegramPublishControl(runId: string) {
     (run.publish_result.next_action !== "manual_retry" &&
       run.publish_result.next_action !== "manual_fix_required")
   ) {
-    return;
+    return { status: "not_needed" } as PublishControlDeliveryResult;
   }
 
-  const sent = await sendTelegramTextMessage({
-    chatId: run.telegram.last_chat_id,
-    text: buildPublishControlMessage(run),
-    replyMarkup: buildPublishControlInlineKeyboard({
+  if (!run.telegram.last_chat_id) {
+    return {
+      status: "no_chat",
       runId: run.id,
-    }),
-  }).catch(() => undefined);
+    } as PublishControlDeliveryResult;
+  }
 
-  if (sent) {
+  try {
+    const sent = await sendTelegramTextMessage({
+      chatId: run.telegram.last_chat_id,
+      text: buildPublishControlMessage(run),
+      replyMarkup: buildPublishControlInlineKeyboard({
+        runId: run.id,
+      }),
+    });
+
     await recordRunPublishControlMessage(run.id, {
       chatId: sent.chatId,
       messageId: sent.messageId,
     }).catch(() => undefined);
+
+    return {
+      status: "sent",
+      runId: run.id,
+      messageId: sent.messageId,
+    } as PublishControlDeliveryResult;
+  } catch (error) {
+    return {
+      status: "failed",
+      runId: run.id,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to send Telegram publish control message.",
+    } as PublishControlDeliveryResult;
   }
 }
 
@@ -194,7 +162,7 @@ export async function publishRunWorkflow(
 
           completedRun = await recordRunSoftError(
             runId,
-            `게시는 완료됐지만 게시 이력 저장에 실패했어요: ${historyMessage}`,
+            `게시는 완료됐지만 게시 이력 동기화에 실패했어요. ${historyMessage}`,
             {
               publishResultError: true,
             },
@@ -245,7 +213,27 @@ export async function publishRunWorkflow(
         }
 
         await assertRunIsActive(runId);
-        await notifyTelegramPublishControl(runId);
+        const publishControlDelivery = await notifyTelegramPublishControl(runId);
+
+        if (publishControlDelivery.status === "no_chat") {
+          await recordRunSoftError(
+            runId,
+            "Publish control is waiting for manual action, but no Telegram chat is linked to this run.",
+            {
+              publishResultError: true,
+            },
+          ).catch(() => undefined);
+        }
+
+        if (publishControlDelivery.status === "failed") {
+          await recordRunSoftError(
+            runId,
+            `Telegram publish control delivery failed: ${publishControlDelivery.error}`,
+            {
+              publishResultError: true,
+            },
+          ).catch(() => undefined);
+        }
 
         throw new Error(message);
       }

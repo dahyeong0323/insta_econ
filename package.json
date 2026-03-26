@@ -7,7 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:editorial-core": "node scripts/verify-editorial-core.mjs",
+    "verify:agent-skills": "node scripts/verify-agent-skills.mjs",
+    "verify:stage-isolation": "node scripts/verify-stage-isolation.mjs",
+    "verify:legacy-artifacts": "node scripts/verify-legacy-artifact-repair.mjs",
+    "verify:planner-renderer-drift": "node scripts/verify-planner-renderer-drift.mjs",
+    "verify:pipeline-regression": "node scripts/verify-pipeline-regression.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

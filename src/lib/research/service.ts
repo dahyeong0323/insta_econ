@@ -2,7 +2,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
 import { type RunState } from "@/lib/agents/schema";
-import { getAudienceInstructions } from "@/lib/agents/prompts";
+import { getAudienceInstructions } from "@/lib/agents/skills/shared";
 import {
   evaluateCandidateSimilarity,
   evaluateCandidateSimilarityAgainstHistory,
@@ -34,6 +34,11 @@ import {
   readRunState,
   writeArtifact,
 } from "@/lib/runs/storage";
+import {
+  activeRunStaleAfterMs,
+  isStaleActiveRun,
+  isTerminalWorkflowStatus,
+} from "@/lib/runs/operator-health";
 import { middleSchoolEconomicsTopics, researchTopicById, type ResearchTopic } from "@/lib/research/topics";
 
 const researchDraftSchema = z
@@ -135,8 +140,6 @@ type ActiveRunSummary = Pick<
   "id" | "workflow_status" | "status" | "updated_at" | "title"
 >;
 
-const activeRunStaleAfterMs = 6 * 60 * 60 * 1000;
-
 const topicCreativeGuides: Partial<Record<string, TopicCreativeGuide>> = {
   scarcity: {
     contentMode: "system",
@@ -224,18 +227,6 @@ export type DispatchResearchResult =
       message: string;
       activeRun: ActiveRunSummary | null;
     };
-
-function isTerminalWorkflowStatus(run: RunState) {
-  return run.workflow_status === "published" || run.workflow_status === "failed";
-}
-
-function getRunAgeMs(run: Pick<RunState, "updated_at">) {
-  return Date.now() - new Date(run.updated_at).getTime();
-}
-
-function isStaleActiveRun(run: RunState) {
-  return getRunAgeMs(run) > activeRunStaleAfterMs;
-}
 
 function summarizeActiveRun(run: RunState): ActiveRunSummary {
   return {

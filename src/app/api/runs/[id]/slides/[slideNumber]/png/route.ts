@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { renderRunSlideToPng } from "@/lib/runs/render-png";
-import { readArtifact } from "@/lib/runs/storage";
+import { readArtifact, readRunState } from "@/lib/runs/storage";
 
 export const runtime = "nodejs";
 
@@ -12,8 +12,14 @@ export async function GET(
   try {
     const { id, slideNumber } = await context.params;
     const parsedSlideNumber = Number(slideNumber);
+    const run = await readRunState(id);
+    const maxSlideNumber = run.project?.slides.length ?? 0;
 
-    if (!Number.isInteger(parsedSlideNumber) || parsedSlideNumber < 1 || parsedSlideNumber > 8) {
+    if (
+      !Number.isInteger(parsedSlideNumber) ||
+      parsedSlideNumber < 1 ||
+      parsedSlideNumber > maxSlideNumber
+    ) {
       return NextResponse.json({ error: "Invalid slide number." }, { status: 400 });
     }
 

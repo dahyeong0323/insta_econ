@@ -40,13 +40,29 @@ import {
   buildFallbackSourceBundle,
 } from "@/lib/agents/fallback";
 import {
+  layoutPatternValues,
+  moduleWeightValues,
   moduleTypeValues,
+  narrativePhaseValues,
+  textDensityValues,
   type CarouselProject,
+  type LayoutPattern,
   type ModuleType,
+  type ModuleWeight,
+  type NarrativePhase,
   type RunState,
   type Slide,
   type SlideModule,
+  type TextDensity,
 } from "@/lib/agents/schema";
+import {
+  getDefaultModuleWeight,
+  getDefaultTextDensity,
+  getExpectedModuleTypeForPattern,
+  getPatternForModuleType,
+  getVisualToneForPattern,
+  resolveEditorialSlide,
+} from "@/lib/design/editorial-core";
 import {
   type InstagramPreflightCheck,
   type InstagramPublishReadiness,
@@ -63,6 +79,37 @@ const sampleProject = buildFallbackProject(
 
 const operatorSecretStorageKey = "econ-carousel-operator-secret";
 
+type ResearchDispatchLockState = {
+  storage: "blob" | "filesystem";
+  exists: boolean;
+  createdAt: string | null;
+  isStale: boolean;
+};
+
+type DispatchStatusNote = {
+  tone: "ready" | "info" | "warning";
+  message: string;
+};
+
+function formatShortTimestamp(value: string | null) {
+  if (!value) {
+    return "기록 없음";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 const moduleLabels: Record<ModuleType, string> = {
   "role-strip": "역할 스트립",
   "before-after": "비포·애프터",
@@ -72,6 +119,40 @@ const moduleLabels: Record<ModuleType, string> = {
   "three-card-summary": "3칸 요약",
   "number-spotlight": "숫자 스포트라이트",
   "message-banner": "한 줄 메시지",
+};
+
+const layoutPatternLabels: Record<LayoutPattern, string> = {
+  "cover-hero": "커버 히어로",
+  "qa-checklist": "Q&A 체크리스트",
+  "qa-before-after": "Q&A 비포·애프터",
+  "qa-role-strip": "Q&A 역할 스트립",
+  "qa-code-window": "Q&A 코드창",
+  "qa-timeline": "Q&A 타임라인",
+  "qa-three-card": "Q&A 3카드",
+  "qa-message-banner": "Q&A 메시지 배너",
+  "closing-statement": "클로징 스테이트먼트",
+};
+
+const narrativePhaseLabels: Record<NarrativePhase, string> = {
+  hook: "도입",
+  definition: "정의",
+  turn: "전환",
+  proof: "증거",
+  practice: "적용",
+  recap: "정리",
+  closing: "마무리",
+};
+
+const moduleWeightLabels: Record<ModuleWeight, string> = {
+  light: "가벼움",
+  medium: "중간",
+  heavy: "강함",
+};
+
+const textDensityLabels: Record<TextDensity, string> = {
+  tight: "타이트",
+  balanced: "균형",
+  dense: "밀도 높음",
 };
 
 function slugify(value: string) {
@@ -220,12 +301,17 @@ export function EconCarouselApp() {
   const [isExporting, setIsExporting] = useState(false);
   const [isPublishControlBusy, setIsPublishControlBusy] = useState(false);
   const [isDispatchBusy, setIsDispatchBusy] = useState(false);
+  const [isDispatchLockBusy, setIsDispatchLockBusy] = useState(false);
+  const [isDispatchLockClearBusy, setIsDispatchLockClearBusy] = useState(false);
   const [isProcessBusy, setIsProcessBusy] = useState(false);
   const [isSendImagesBusy, setIsSendImagesBusy] = useState(false);
   const [isFailRunBusy, setIsFailRunBusy] = useState(false);
   const [isRefreshBusy, setIsRefreshBusy] = useState(false);
   const [isInstagramPreflightBusy, setIsInstagramPreflightBusy] = useState(false);
   const [operatorSecret, setOperatorSecret] = useState("");
+  const [dispatchLockState, setDispatchLockState] =
+    useState<ResearchDispatchLockState | null>(null);
+  const [dispatchStatusNote, setDispatchStatusNote] = useState<DispatchStatusNote | null>(null);
   const [instagramPreflight, setInstagramPreflight] =
     useState<InstagramPublishReadiness | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -282,6 +368,43 @@ export function EconCarouselApp() {
 
     return data as RunState;
   }, [buildOperatorAuthHeaders]);
+
+  const refreshResearchDispatchLockState = useCallback(async () => {
+    const normalizedSecret = operatorSecret.trim();
+
+    if (!normalizedSecret) {
+      setDispatchLockState(null);
+      return null;
+    }
+
+    setIsDispatchLockBusy(true);
+
+    try {
+      const response = await fetch("/api/research/dispatch/lock", {
+        cache: "no-store",
+        headers: buildOperatorAuthHeaders(),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "research dispatch lock 상태를 불러오지 못했습니다.");
+      }
+
+      setDispatchLockState(data as ResearchDispatchLockState);
+      return data as ResearchDispatchLockState;
+    } finally {
+      setIsDispatchLockBusy(false);
+    }
+  }, [buildOperatorAuthHeaders, operatorSecret]);
+
+  useEffect(() => {
+    if (!operatorSecret.trim()) {
+      setDispatchLockState(null);
+      return;
+    }
+
+    void refreshResearchDispatchLockState().catch(() => undefined);
+  }, [operatorSecret, refreshResearchDispatchLockState]);
 
   useEffect(() => {
     if (!runId) {
@@ -417,10 +540,20 @@ export function EconCarouselApp() {
       return;
     }
 
+    const totalSlides = project.slides.length;
+
     setProject({
       ...project,
       slides: project.slides.map((slide) =>
-        slide.slide_number === selectedSlide.slide_number ? { ...slide, ...patch } : slide,
+        slide.slide_number === selectedSlide.slide_number
+          ? resolveEditorialSlide(
+              {
+                ...slide,
+                ...patch,
+              },
+              totalSlides,
+            )
+          : slide,
       ),
     });
   }
@@ -430,7 +563,16 @@ export function EconCarouselApp() {
       return;
     }
 
-    updateSlide({ module: remixModule(type, selectedSlide) });
+    const layoutPattern = getPatternForModuleType(type);
+    const resolvedType = getExpectedModuleTypeForPattern(layoutPattern) ?? type;
+
+    updateSlide({
+      layout_pattern: layoutPattern,
+      visual_tone: getVisualToneForPattern(layoutPattern),
+      module_weight: getDefaultModuleWeight(layoutPattern),
+      text_density: getDefaultTextDensity(layoutPattern),
+      module: remixModule(resolvedType, selectedSlide),
+    });
   }
 
   async function captureSlide(slideNumber: number) {
@@ -593,6 +735,38 @@ export function EconCarouselApp() {
     }
   }
 
+  async function handleClearDispatchLock() {
+    setIsDispatchLockClearBusy(true);
+
+    try {
+      const response = await fetch("/api/research/dispatch/lock", {
+        method: "DELETE",
+        headers: buildOperatorAuthHeaders(),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "research dispatch lock 해제에 실패했습니다.");
+      }
+
+      if (data.state) {
+        setDispatchLockState(data.state as ResearchDispatchLockState);
+      }
+
+      setDispatchStatusNote({
+        tone: "ready",
+        message: "research dispatch lock을 수동으로 정리했어요.",
+      });
+      toast.success("research dispatch lock을 정리했어요.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "research dispatch lock 해제에 실패했어요.",
+      );
+    } finally {
+      setIsDispatchLockClearBusy(false);
+    }
+  }
+
   async function handleDispatchResearch() {
     setIsDispatchBusy(true);
 
@@ -613,20 +787,36 @@ export function EconCarouselApp() {
         setRun(data.run);
         setProject(data.run.project ?? null);
         setSelectedSlideNumber(1);
+        setDispatchStatusNote({
+          tone: "ready",
+          message: `${data.run.title ?? "새 research"}를 dispatch했어요.`,
+        });
+        await refreshResearchDispatchLockState().catch(() => undefined);
         toast.success(`${data.run.title ?? "새 research"}를 시작했어요.`);
         return;
       }
 
       if (data.status === "skipped") {
+        setDispatchStatusNote({
+          tone: data.reason === "dispatch_locked" ? "warning" : "info",
+          message: data.message ?? "진행 중인 작업 때문에 새 research를 건너뛰었어요.",
+        });
+
         if (data.activeRun?.id) {
           setRunId(data.activeRun.id);
           await refreshRunState(data.activeRun.id);
         }
 
+        await refreshResearchDispatchLockState().catch(() => undefined);
         toast(data.message ?? "진행 중인 run이 있어 새 research를 건너뛰었어요.");
         return;
       }
 
+      setDispatchStatusNote({
+        tone: "ready",
+        message: "research dispatch 요청을 보냈어요.",
+      });
+      await refreshResearchDispatchLockState().catch(() => undefined);
       toast.success("research dispatch 요청을 보냈어요.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "research dispatch에 실패했어요.");
@@ -898,9 +1088,10 @@ export function EconCarouselApp() {
                 이렇게 뽑아줘
               </h1>
               <p className="mt-6 max-w-[56ch] text-[22px] font-bold leading-9 text-[#6d412f]">
-                경제학 텍스트를 붙여넣거나 PDF를 올리면, source-parser부터 qa-reviewer까지
-                역할을 나눠 8장 카드뉴스를 만듭니다. 결과물은 인터뷰형 카드뉴스 문법으로
-                정리되고 PNG로 바로 저장할 수 있어요.
+                경제학 텍스트를 붙여넣거나 PDF를 올리면, source-parser부터 qa-validator와
+                qa-repair까지
+                역할을 나눠 6~10장 editorial Q&A 카드뉴스를 만듭니다. 결과물은 인터뷰형
+                카드뉴스 문법으로 정리되고 PNG로 바로 저장할 수 있어요.
               </p>
             </div>
 
@@ -1030,6 +1221,110 @@ export function EconCarouselApp() {
                     placeholder="운영용 secret"
                   />
                 </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-black/5 bg-white/85 shadow-[0_18px_40px_rgba(44,34,24,0.08)]">
+                <CardContent className="space-y-4 p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] font-black uppercase tracking-[0.2em] text-zinc-400">
+                        Research scheduler
+                      </div>
+                      <div className="mt-2 text-xl font-black tracking-[-0.04em] text-[#17171b]">
+                        dispatch lock 상태
+                      </div>
+                      <p className="mt-2 text-sm font-bold leading-6 text-zinc-600">
+                        scheduler dispatch는 lock으로 중복 실행을 막습니다. stale lock이면 여기서 바로
+                        확인하고 정리할 수 있습니다.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void refreshResearchDispatchLockState()}
+                        disabled={!operatorSecret.trim() || isDispatchLockBusy}
+                      >
+                        {isDispatchLockBusy ? (
+                          <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCcw className="mr-2 h-4 w-4" />
+                        )}
+                        lock 새로고침
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleClearDispatchLock}
+                        disabled={
+                          !operatorSecret.trim() ||
+                          !dispatchLockState?.exists ||
+                          !dispatchLockState.isStale ||
+                          isDispatchLockClearBusy
+                        }
+                      >
+                        {isDispatchLockClearBusy ? (
+                          <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                        ) : null}
+                        stale lock 정리
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Badge
+                      variant={
+                        !operatorSecret.trim()
+                          ? "outline"
+                          : dispatchLockState?.exists
+                            ? dispatchLockState.isStale
+                              ? "destructive"
+                              : "secondary"
+                            : "secondary"
+                      }
+                    >
+                      {!operatorSecret.trim()
+                        ? "secret 필요"
+                        : dispatchLockState?.exists
+                          ? dispatchLockState.isStale
+                            ? "stale lock"
+                            : "lock active"
+                          : "lock clear"}
+                    </Badge>
+                    {dispatchLockState?.storage ? (
+                      <Badge variant="secondary">{dispatchLockState.storage}</Badge>
+                    ) : null}
+                    {dispatchLockState?.createdAt ? (
+                      <Badge variant="secondary">
+                        created {formatShortTimestamp(dispatchLockState.createdAt)}
+                      </Badge>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-[20px] bg-[#faf8fb] px-4 py-4 text-sm font-bold leading-6 text-zinc-600">
+                    {!operatorSecret.trim()
+                      ? "운영자 secret이 있어야 scheduler lock 상태를 읽을 수 있습니다."
+                      : dispatchLockState?.exists
+                        ? dispatchLockState.isStale
+                          ? "30분 이상 남아 있는 stale dispatch lock입니다. 실제 작업이 끝났다면 정리 후 다시 dispatch하세요."
+                          : "현재 research dispatch가 실행 중이거나 방금 실행된 상태입니다."
+                        : "현재 research dispatch lock은 비어 있습니다."}
+                  </div>
+
+                  {dispatchStatusNote ? (
+                    <div
+                      className={`rounded-[20px] px-4 py-4 text-sm font-bold leading-6 ${
+                        dispatchStatusNote.tone === "warning"
+                          ? "border border-amber-200 bg-amber-50 text-amber-900"
+                          : dispatchStatusNote.tone === "ready"
+                            ? "bg-[#faf8fb] text-zinc-600"
+                            : "bg-[#f5f8ff] text-sky-900"
+                      }`}
+                    >
+                      {dispatchStatusNote.message}
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
 
@@ -1273,7 +1568,11 @@ export function EconCarouselApp() {
 
             <div className="rounded-[34px] border border-black/5 bg-white/70 p-5 shadow-[0_22px_54px_rgba(44,34,24,0.08)]">
               <div className="mx-auto w-full max-w-[540px]">
-                <SlideCard slide={selectedSlide} />
+                <SlideCard
+                  slide={selectedSlide}
+                  totalSlides={displayProject.slides.length}
+                  themeName={displayProject.theme_name}
+                />
               </div>
             </div>
 
@@ -1291,10 +1590,14 @@ export function EconCarouselApp() {
                     }`}
                   >
                     <div className="mx-auto w-full max-w-[110px]">
-                      <SlideCard slide={slide} />
+                      <SlideCard
+                        slide={slide}
+                        totalSlides={displayProject.slides.length}
+                        themeName={displayProject.theme_name}
+                      />
                     </div>
                     <div className="mt-3 text-[12px] font-black uppercase tracking-[0.2em] opacity-70">
-                      {String(slide.slide_number).padStart(2, "0")} / 08
+                      {String(slide.slide_number).padStart(2, "0")} / {String(displayProject.slides.length).padStart(2, "0")}
                     </div>
                     <div className="mt-1 line-clamp-2 text-sm font-black leading-5 tracking-[-0.03em]">
                       {slide.headline}
@@ -1381,6 +1684,107 @@ export function EconCarouselApp() {
                     }
                     disabled={!project}
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>레이아웃 패턴</Label>
+                  <Select
+                    value={selectedSlide.layout_pattern}
+                    onValueChange={(value) => {
+                      const layoutPattern = value as LayoutPattern;
+                      const resolvedType =
+                        getExpectedModuleTypeForPattern(layoutPattern) ??
+                        selectedSlide.module.type;
+
+                      updateSlide({
+                        layout_pattern: layoutPattern,
+                        visual_tone: getVisualToneForPattern(layoutPattern),
+                        module_weight: getDefaultModuleWeight(layoutPattern),
+                        text_density: getDefaultTextDensity(layoutPattern),
+                        module: remixModule(resolvedType, selectedSlide),
+                      });
+                    }}
+                    disabled={!project}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {layoutPatternValues.map((pattern) => (
+                        <SelectItem key={pattern} value={pattern}>
+                          {layoutPatternLabels[pattern]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>서사 단계</Label>
+                    <Select
+                      value={selectedSlide.narrative_phase}
+                      onValueChange={(value) =>
+                        updateSlide({ narrative_phase: value as NarrativePhase })
+                      }
+                      disabled={!project}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {narrativePhaseValues.map((phase) => (
+                          <SelectItem key={phase} value={phase}>
+                            {narrativePhaseLabels[phase]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>모듈 강도</Label>
+                    <Select
+                      value={selectedSlide.module_weight}
+                      onValueChange={(value) =>
+                        updateSlide({ module_weight: value as ModuleWeight })
+                      }
+                      disabled={!project}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {moduleWeightValues.map((weight) => (
+                          <SelectItem key={weight} value={weight}>
+                            {moduleWeightLabels[weight]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>텍스트 밀도</Label>
+                    <Select
+                      value={selectedSlide.text_density}
+                      onValueChange={(value) =>
+                        updateSlide({ text_density: value as TextDensity })
+                      }
+                      disabled={!project}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {textDensityValues.map((density) => (
+                          <SelectItem key={density} value={density}>
+                            {textDensityLabels[density]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -1513,7 +1917,8 @@ export function EconCarouselApp() {
                   </>
                 ) : (
                   <div className="rounded-[20px] bg-[#faf8fb] px-4 py-3 text-sm font-bold text-zinc-500">
-                    qa-reviewer가 끝나면 검수 결과가 여기에 보입니다.
+                    qa-validator와 qa-reviewer가 끝나면 검수 결과가 여기에 보입니다. 문제가
+                    있으면 qa-repair가 이어서 자동 수정합니다.
                   </div>
                 )}
               </CardContent>
@@ -1525,7 +1930,11 @@ export function EconCarouselApp() {
           <DialogContent className="max-w-[min(92vw,720px)] border border-black/5 bg-[#f4f0f4] p-5">
             <DialogTitle className="sr-only">슬라이드 확대 보기</DialogTitle>
             <div className="mx-auto w-full max-w-[560px]">
-              <SlideCard slide={selectedSlide} />
+              <SlideCard
+                slide={selectedSlide}
+                totalSlides={displayProject.slides.length}
+                themeName={displayProject.theme_name}
+              />
             </div>
           </DialogContent>
         </Dialog>
@@ -1540,7 +1949,11 @@ export function EconCarouselApp() {
                 }}
                 style={{ width: 1080 }}
               >
-                <SlideCard slide={slide} />
+                <SlideCard
+                  slide={slide}
+                  totalSlides={project.slides.length}
+                  themeName={project.theme_name}
+                />
               </div>
             ))}
           </div>

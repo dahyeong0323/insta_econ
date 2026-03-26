@@ -1,6 +1,10 @@
 import { type RunState } from "@/lib/agents/schema";
-import { type SimilarityCheckResult } from "@/lib/history/similarity";
+import {
+  getSimilarityOperatorGuide,
+  type SimilarityCheckResult,
+} from "@/lib/history/similarity";
 import { type ResearchSelectionMetadata } from "@/lib/research/metadata";
+import { getPublishOperatorGuide } from "@/lib/runs/publish-guide";
 
 export type TelegramInlineKeyboardMarkup = {
   inline_keyboard: Array<
@@ -61,20 +65,23 @@ function formatTitle(run: RunState) {
 }
 
 function formatSimilarity(similarity: SimilarityCheckResult) {
-  const headline =
-    similarity.decision === "block"
-      ? "유사도 판정: BLOCK"
-      : similarity.decision === "review"
-        ? "유사도 판정: REVIEW"
-        : "유사도 판정: CLEAR";
+  const guide = getSimilarityOperatorGuide(similarity);
+  const reasonLines = guide.detailLines.map((reason) => `- ${reason}`);
 
-  const reasonLines = similarity.reasons.map((reason) => `- ${reason}`);
-  return reasonLines.length > 0 ? `${headline}\n${reasonLines.join("\n")}` : headline;
+  return [
+    `유사도 판단: ${guide.badge}`,
+    guide.headline,
+    guide.summary,
+    reasonLines.length > 0 ? reasonLines.join("\n") : null,
+    `다음 액션: ${guide.recommendedAction}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function formatResearchFlow(research: ResearchSelectionMetadata) {
   return [
-    "계정 흐름",
+    "선정 흐름",
     `- 시리즈: ${research.seriesTitle} ${research.seriesOrder}편`,
     `- 커리큘럼 위치: ${research.curriculumPosition}`,
     `- 설명 각도: ${research.teachingAngle}`,
@@ -115,7 +122,7 @@ export function buildScriptApprovalMessage({
     formatSimilarity(similarity),
     "",
     "처리 방법",
-    "- 버튼: 승인 / 수정 요청 / 보류 / 스킵",
+    "- 버튼: 초안 승인 / 수정 요청 / 보류 / 스킵",
     "- 답장: `수정: 원하는 수정사항`",
     "",
     `메모: ${approvalNote}`,
@@ -140,18 +147,15 @@ export function buildImageApprovalMessage(run: RunState) {
     `주제: ${formatTitle(run)}`,
     "",
     "처리 방법",
-    "- 버튼: 승인 / 수정 요청 / 보류 / 스킵",
+    "- 버튼: 이미지 승인 / 수정 요청 / 보류 / 스킵",
     "- 답장: `수정: 원하는 수정사항`",
     "",
-    "이미지 승인 후에는 게시 준비 단계로 넘어갑니다.",
+    "이미지 승인 이후에는 게시 준비 단계로 넘어갑니다.",
   ].join("\n");
 }
 
 export function buildPublishControlMessage(run: RunState) {
-  const nextAction =
-    run.publish_result.next_action === "manual_retry"
-      ? "운영자가 게시 재시도 여부를 결정해야 합니다."
-      : "설정 확인 후 다시 게시할지 결정해야 합니다.";
+  const guide = getPublishOperatorGuide(run.publish_result);
 
   return [
     "인스타 게시 확인 요청",
@@ -160,11 +164,12 @@ export function buildPublishControlMessage(run: RunState) {
     `주제: ${formatTitle(run)}`,
     "",
     `상태: ${run.publish_result.status}`,
-    `다음 조치: ${run.publish_result.next_action}`,
+    `운영 가이드: ${guide.badge} / ${guide.headline}`,
     "",
-    renderCompactText(run.publish_result.hold_reason ?? run.publish_result.error),
+    guide.summary,
     "",
-    nextAction,
+    `다음 액션: ${guide.recommendedAction}`,
+    `세부 사유: ${renderCompactText(run.publish_result.hold_reason ?? run.publish_result.error)}`,
     "아래 버튼에서 `게시 다시 시도` 또는 `이번 게시 중단`을 선택할 수 있습니다.",
   ].join("\n");
 }
@@ -196,7 +201,7 @@ export function buildRunNotificationMessage(input: {
       `주제: ${title}`,
       "",
       "이제 이미지 승인 단계로 넘어갈 준비가 됐습니다.",
-      "운영 화면에서 Telegram 이미지 전송을 실행하면 최종 검수를 이어갈 수 있습니다.",
+      "운영 화면에서 Telegram 이미지 전송을 실행하면 최종 검토를 이어갈 수 있습니다.",
     ].join("\n");
   }
 
@@ -230,7 +235,7 @@ export function buildRunNotificationMessage(input: {
     `run: ${input.run.id}`,
     `주제: ${title}`,
     "",
-    input.permalink ? `링크: ${input.permalink}` : "게시 링크는 아직 전달되지 않았습니다.",
+    input.permalink ? `링크: ${input.permalink}` : "게시 링크가 아직 전달되지 않았습니다.",
   ].join("\n");
 }
 

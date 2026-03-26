@@ -19,6 +19,14 @@ export type SimilarityCheckResult = {
   matches: SimilarContentMatch[];
 };
 
+export type SimilarityOperatorGuide = {
+  badge: "CLEAR" | "REVIEW" | "BLOCK";
+  headline: string;
+  summary: string;
+  recommendedAction: string;
+  detailLines: string[];
+};
+
 export type SimilarityCheckInput = {
   title: string;
   keyTerms?: string[];
@@ -207,4 +215,48 @@ export async function evaluateCandidateSimilarity(
   });
 
   return evaluateCandidateSimilarityAgainstHistory(input, history);
+}
+
+export function getSimilarityOperatorGuide(
+  similarity: SimilarityCheckResult,
+): SimilarityOperatorGuide {
+  const detailLines = similarity.reasons.slice(0, 3);
+
+  if (similarity.decision === "block") {
+    if (similarity.exactTopicMatch) {
+      return {
+        badge: "BLOCK",
+        headline: "이미 게시한 주제와 직접 겹칩니다.",
+        summary: `${similarity.exactTopicMatch.title}와 같은 주제 축으로 판단돼 재게시 위험이 큽니다.`,
+        recommendedAction: "이 주제는 멈추고 다른 topic 또는 다른 개념 축으로 다시 고르세요.",
+        detailLines,
+      };
+    }
+
+    return {
+      badge: "BLOCK",
+      headline: "최근 게시물과 너무 가깝습니다.",
+      summary: "핵심 용어나 설명 각도가 겹쳐 그대로 진행하면 재탕처럼 보일 수 있습니다.",
+      recommendedAction: "같은 개념을 유지하더라도 질문, 예시, 설명 각도를 크게 바꾸지 않으면 중단하세요.",
+      detailLines,
+    };
+  }
+
+  if (similarity.decision === "review") {
+    return {
+      badge: "REVIEW",
+      headline: "유사 게시물이 있어 운영 검토가 필요합니다.",
+      summary: "완전 중복은 아니지만 최근 게시물과 설명 각도가 가까울 수 있습니다.",
+      recommendedAction: "같은 용어를 써도 질문 방식, 비유, 학생 상황 예시가 충분히 달라지는지 확인하세요.",
+      detailLines,
+    };
+  }
+
+  return {
+    badge: "CLEAR",
+    headline: "최근 게시 이력과 직접 충돌하지 않습니다.",
+    summary: "지금 기준으로는 같은 주제 재게시나 과한 유사성 위험이 낮습니다.",
+    recommendedAction: "다음 단계로 진행해도 됩니다.",
+    detailLines,
+  };
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   evaluateCandidateSimilarity,
+  getSimilarityOperatorGuide,
   similarityThresholds,
 } from "@/lib/history/similarity";
 
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ...result,
+      operatorGuide: getSimilarityOperatorGuide(result),
       thresholds: similarityThresholds,
     });
   } catch (error) {

@@ -57,11 +57,111 @@ export const publishNextActionValues = [
 export const publishControlActionValues = ["retry", "stop"] as const;
 export const stageValues = [
   "source-parser",
+  "content-planner",
+  "contents-marketer",
+  "designer",
+  "developer",
+  "qa-validator",
+  "qa-reviewer",
+  "qa-repair",
+] as const;
+export const originalPdfAgentValues = [
+  "researcher",
   "contents-marketer",
   "designer",
   "developer",
   "qa-reviewer",
 ] as const;
+
+type StageResponsibilitySpec = {
+  originalAgent: (typeof originalPdfAgentValues)[number];
+  stagePurpose: string;
+  splitNote?: string;
+  forbiddenResponsibilities: readonly string[];
+};
+
+export const stageResponsibilityMap = {
+  "source-parser": {
+    originalAgent: "researcher",
+    stagePurpose: "Extract grounded source facts, numbers, terms, and quote candidates only.",
+    splitNote: "Current runtime splits the original researcher into source-parser + content-planner.",
+    forbiddenResponsibilities: [
+      "Do not choose slide rhythm, question angles, or module structure.",
+      "Do not write slide copy, badges, or reader-facing carousel text.",
+      "Do not touch HTML, rendering, or QA pass/fail decisions.",
+    ],
+  },
+  "content-planner": {
+    originalAgent: "researcher",
+    stagePurpose: "Turn the grounded source bundle into the deck plan, rhythm, and question flow.",
+    splitNote: "Current runtime splits the original researcher into source-parser + content-planner.",
+    forbiddenResponsibilities: [
+      "Do not write final slide copy.",
+      "Do not assign final badge/module payloads outside the plan contract.",
+      "Do not edit rendered project output or make QA decisions.",
+    ],
+  },
+  "contents-marketer": {
+    originalAgent: "contents-marketer",
+    stagePurpose: "Write reader-facing Korean slide copy that follows the approved plan exactly.",
+    forbiddenResponsibilities: [
+      "Do not change slide count, role sequence, or layout rhythm.",
+      "Do not output visual production notes, module specs, or HTML.",
+      "Do not review or repair slides as QA.",
+    ],
+  },
+  designer: {
+    originalAgent: "designer",
+    stagePurpose: "Assign badges, visual tone details, and module payloads inside the plan contract.",
+    forbiddenResponsibilities: [
+      "Do not invent new source facts or rewrite the story arc.",
+      "Do not output standalone HTML or renderer implementation details.",
+      "Do not decide whether the deck passes QA.",
+    ],
+  },
+  developer: {
+    originalAgent: "developer",
+    stagePurpose: "Assemble the validated project and standalone render output from saved artifacts.",
+    forbiddenResponsibilities: [
+      "Do not change the source bundle, plan, or copy intent on your own.",
+      "Do not perform review-only QA judgment.",
+      "Do not choose new topic angles or redesign the narrative rhythm.",
+    ],
+  },
+  "qa-validator": {
+    originalAgent: "qa-reviewer",
+    stagePurpose: "Run deterministic structural checks before human-like review heuristics.",
+    splitNote: "Current runtime splits the original qa-reviewer into qa-validator + qa-reviewer.",
+    forbiddenResponsibilities: [
+      "Do not rewrite slides or mutate the project.",
+      "Do not introduce new facts, copy, or layout decisions.",
+      "Do not act as the repair stage.",
+    ],
+  },
+  "qa-reviewer": {
+    originalAgent: "qa-reviewer",
+    stagePurpose: "Review readability, grounding, and presentation quality without editing slides.",
+    splitNote: "Current runtime splits the original qa-reviewer into qa-validator + qa-reviewer.",
+    forbiddenResponsibilities: [
+      "Do not rewrite slides or mutate the project.",
+      "Do not act as the repair stage.",
+      "Do not expand scope into topic planning or rendering.",
+    ],
+  },
+  "qa-repair": {
+    originalAgent: "developer",
+    stagePurpose: "Repair only the flagged slides while preserving the approved story and plan.",
+    splitNote: "Current runtime treats repair as a developer-side execution pass after review.",
+    forbiddenResponsibilities: [
+      "Do not re-plan the entire deck or change unaffected slides.",
+      "Do not invent unsupported facts, numbers, or quotes.",
+      "Do not act as the reviewer that decides whether issues exist.",
+    ],
+  },
+} satisfies Record<(typeof stageValues)[number], StageResponsibilitySpec>;
+export const minCarouselSlides = 6;
+export const maxCarouselSlides = 10;
+export const editorialThemeName = "editorial-qna" as const;
 export const slideRoleValues = [
   "hook",
   "core",
@@ -83,6 +183,28 @@ export const moduleTypeValues = [
   "message-banner",
 ] as const;
 export const visualToneValues = ["cover", "light", "dark"] as const;
+export const layoutPatternValues = [
+  "cover-hero",
+  "qa-checklist",
+  "qa-before-after",
+  "qa-role-strip",
+  "qa-code-window",
+  "qa-timeline",
+  "qa-three-card",
+  "qa-message-banner",
+  "closing-statement",
+] as const;
+export const narrativePhaseValues = [
+  "hook",
+  "definition",
+  "turn",
+  "proof",
+  "practice",
+  "recap",
+  "closing",
+] as const;
+export const moduleWeightValues = ["light", "medium", "heavy"] as const;
+export const textDensityValues = ["tight", "balanced", "dense"] as const;
 
 const approvalStateDefaults = {
   status: "not_requested" as const,
@@ -167,11 +289,97 @@ export const slideModuleSchema = z
   })
   .strict();
 
+function inferLegacyLayoutPattern(
+  visualTone: (typeof visualToneValues)[number],
+  moduleType: (typeof moduleTypeValues)[number],
+) {
+  if (visualTone === "cover") {
+    return "cover-hero" as const;
+  }
+
+  if (visualTone === "dark") {
+    return "closing-statement" as const;
+  }
+
+  switch (moduleType) {
+    case "role-strip":
+      return "qa-role-strip" as const;
+    case "before-after":
+      return "qa-before-after" as const;
+    case "code-window":
+      return "qa-code-window" as const;
+    case "checklist-table":
+      return "qa-checklist" as const;
+    case "timeline":
+      return "qa-timeline" as const;
+    case "three-card-summary":
+      return "qa-three-card" as const;
+    case "message-banner":
+    case "number-spotlight":
+    default:
+      return "qa-message-banner" as const;
+  }
+}
+
+function inferLegacyNarrativePhase(role: (typeof slideRoleValues)[number]) {
+  switch (role) {
+    case "hook":
+      return "hook" as const;
+    case "core":
+      return "definition" as const;
+    case "why":
+      return "turn" as const;
+    case "example":
+    case "compare":
+      return "proof" as const;
+    case "number_or_steps":
+      return "practice" as const;
+    case "recap":
+      return "recap" as const;
+    case "closing":
+      return "closing" as const;
+  }
+}
+
+function inferLegacyModuleWeight(
+  visualTone: (typeof visualToneValues)[number],
+  role: (typeof slideRoleValues)[number],
+) {
+  if (visualTone !== "light") {
+    return "light" as const;
+  }
+
+  if (role === "recap") {
+    return "medium" as const;
+  }
+
+  return "heavy" as const;
+}
+
+function inferLegacyTextDensity(
+  visualTone: (typeof visualToneValues)[number],
+  role: (typeof slideRoleValues)[number],
+) {
+  if (visualTone !== "light" || role === "hook" || role === "closing") {
+    return "tight" as const;
+  }
+
+  if (role === "core" || role === "why") {
+    return "balanced" as const;
+  }
+
+  return "dense" as const;
+}
+
 export const slideSchema = z
   .object({
-    slide_number: z.number().int().min(1).max(8),
+    slide_number: z.number().int().min(1).max(maxCarouselSlides),
     role: z.enum(slideRoleValues),
     visual_tone: z.enum(visualToneValues),
+    layout_pattern: z.enum(layoutPatternValues).optional(),
+    narrative_phase: z.enum(narrativePhaseValues).optional(),
+    module_weight: z.enum(moduleWeightValues).optional(),
+    text_density: z.enum(textDensityValues).optional(),
     question_badge: z.string().min(1).max(32),
     headline: z.string().min(1).max(120),
     body: z.string().min(1).max(280),
@@ -181,7 +389,92 @@ export const slideSchema = z
     module: slideModuleSchema,
     standalone_html: z.string().min(1),
   })
+  .strict()
+  .transform((slide) => ({
+    ...slide,
+    layout_pattern:
+      slide.layout_pattern ??
+      inferLegacyLayoutPattern(slide.visual_tone, slide.module.type),
+    narrative_phase: slide.narrative_phase ?? inferLegacyNarrativePhase(slide.role),
+    module_weight:
+      slide.module_weight ?? inferLegacyModuleWeight(slide.visual_tone, slide.role),
+    text_density:
+      slide.text_density ?? inferLegacyTextDensity(slide.visual_tone, slide.role),
+  }));
+
+export const designPlanSlideSchema = z
+  .object({
+    slide_number: z.number().int().min(1).max(maxCarouselSlides),
+    role: z.enum(slideRoleValues),
+    visual_tone: z.enum(visualToneValues),
+    layout_pattern: z.enum(layoutPatternValues),
+    narrative_phase: z.enum(narrativePhaseValues),
+    module_weight: z.enum(moduleWeightValues),
+    text_density: z.enum(textDensityValues),
+    emotional_temperature: z.number().int().min(1).max(5),
+    question_angle: z.string().min(1).max(80),
+    question_tone: z.string().min(1).max(40),
+    module_goal: z.string().min(1).max(120),
+    module_candidates: z.array(z.enum(moduleTypeValues)).min(1).max(3),
+    forbidden_patterns: z.array(z.enum(layoutPatternValues)).max(3),
+    text_budget: z
+      .object({
+        headline_max: z.number().int().min(24).max(120),
+        body_max: z.number().int().min(60).max(280),
+        emphasis_max: z.number().int().min(20).max(60),
+        save_point_max: z.number().int().min(20).max(120),
+      })
+      .strict(),
+  })
   .strict();
+
+const carouselSlidesSchema = z
+  .array(slideSchema)
+  .min(minCarouselSlides)
+  .max(maxCarouselSlides)
+  .superRefine((slides, ctx) => {
+    const seen = new Set<number>();
+
+    slides.forEach((slide, index) => {
+      const expectedSlideNumber = index + 1;
+
+      if (seen.has(slide.slide_number)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate slide number ${slide.slide_number}.`,
+          path: [index, "slide_number"],
+        });
+      }
+
+      seen.add(slide.slide_number);
+
+      if (slide.slide_number !== expectedSlideNumber) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Slide numbers must be sequential starting at 1. Expected ${expectedSlideNumber}.`,
+          path: [index, "slide_number"],
+        });
+      }
+    });
+
+    if (slides[0]?.role !== "hook") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The first slide must use the hook role.",
+        path: [0, "role"],
+      });
+    }
+
+    const lastSlideIndex = slides.length - 1;
+
+    if (lastSlideIndex >= 0 && slides[lastSlideIndex]?.role !== "closing") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "The final slide must use the closing role.",
+        path: [lastSlideIndex, "role"],
+      });
+    }
+  });
 
 export const qaIssueSchema = z
   .object({
@@ -201,6 +494,8 @@ export const qaReportSchema = z
   })
   .strict();
 
+export const qaValidatorReportSchema = qaReportSchema;
+
 export const carouselProjectSchema = z
   .object({
     brand_label: z.string().min(1).max(40),
@@ -209,7 +504,16 @@ export const carouselProjectSchema = z
     language: z.literal("ko"),
     theme_name: z.string().min(1).max(40),
     caption: z.string().min(1).max(1200),
-    slides: z.array(slideSchema).length(8),
+    slides: carouselSlidesSchema,
+  })
+  .strict();
+
+export const designPlanSchema = z
+  .object({
+    theme_name: z.string().min(1).max(40),
+    guardrails: z.array(z.string().min(1).max(120)).min(3).max(8),
+    story_arc: z.string().min(1).max(200),
+    slides: z.array(designPlanSlideSchema).min(minCarouselSlides).max(maxCarouselSlides),
   })
   .strict();
 
@@ -353,6 +657,7 @@ export const runStateSchema = z
     updated_at: z.string(),
     source_file_name: z.string().nullable(),
     source_bundle: sourceBundleSchema.nullable(),
+    design_plan: designPlanSchema.nullable().default(null),
     project: carouselProjectSchema.nullable(),
     qa_report: qaReportSchema.nullable(),
     telegram: telegramDeliverySchema.default(telegramDeliveryDefaults),
@@ -364,7 +669,7 @@ export const runStateSchema = z
     publish_result: publishResultSchema.default(publishResultDefaults),
     publish_attempts: z.array(publishAttemptSchema).default(publishAttemptDefaults),
     error: z.string().nullable(),
-    logs: z.array(stageLogSchema).length(stageValues.length),
+    logs: z.array(stageLogSchema).min(stageValues.length - 1).max(stageValues.length),
   })
   .strict();
 
@@ -417,7 +722,7 @@ export const publishControlSchema = z
 
 export const regenerateSlideSchema = z
   .object({
-    slideNumber: z.number().int().min(1).max(8),
+    slideNumber: z.number().int().min(1),
   })
   .strict();
 
@@ -426,17 +731,26 @@ export type RunEntrypoint = (typeof runEntrypointValues)[number];
 export type StageName = (typeof stageValues)[number];
 export type ModuleType = (typeof moduleTypeValues)[number];
 export type WorkflowStatus = (typeof workflowStatusValues)[number];
+export type SlideRole = (typeof slideRoleValues)[number];
+export type VisualTone = (typeof visualToneValues)[number];
 export type ApprovalStatus = (typeof approvalStatusValues)[number];
 export type ApprovalTarget = (typeof approvalTargetValues)[number];
 export type ApprovalDecision = (typeof approvalDecisionValues)[number];
 export type ApprovalEventType = (typeof approvalEventTypeValues)[number];
 export type PublishTrigger = (typeof publishTriggerValues)[number];
 export type PublishControlAction = (typeof publishControlActionValues)[number];
+export type LayoutPattern = (typeof layoutPatternValues)[number];
+export type NarrativePhase = (typeof narrativePhaseValues)[number];
+export type ModuleWeight = (typeof moduleWeightValues)[number];
+export type TextDensity = (typeof textDensityValues)[number];
 export type SourceBundle = z.infer<typeof sourceBundleSchema>;
 export type SlideModule = z.infer<typeof slideModuleSchema>;
 export type Slide = z.infer<typeof slideSchema>;
 export type QaReport = z.infer<typeof qaReportSchema>;
+export type QaValidatorReport = z.infer<typeof qaValidatorReportSchema>;
 export type CarouselProject = z.infer<typeof carouselProjectSchema>;
+export type DesignPlanSlide = z.infer<typeof designPlanSlideSchema>;
+export type DesignPlan = z.infer<typeof designPlanSchema>;
 export type ApprovalState = z.infer<typeof approvalStateSchema>;
 export type ApprovalHistoryEntry = z.infer<typeof approvalHistoryEntrySchema>;
 export type PublishResult = z.infer<typeof publishResultSchema>;

@@ -20,7 +20,7 @@ const displayFont = Space_Grotesk({
 export const metadata: Metadata = {
   title: "보리의 10대를 위한 경제",
   description:
-    "경제학 텍스트와 PDF를 8장 카드뉴스로 바꾸는 한국어 에이전트 기반 웹 앱",
+    "경제학 텍스트와 PDF를 6~10장 editorial Q&A 카드뉴스로 바꾸는 한국어 에이전트 기반 웹 앱",
 };
 
 export default function RootLayout({

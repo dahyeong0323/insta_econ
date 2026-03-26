@@ -1,6 +1,14 @@
 "use client";
 
-import { LoaderCircle, RefreshCcw, Sparkles, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock3,
+  LoaderCircle,
+  RefreshCcw,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +20,13 @@ import {
   type PublishAttempt,
   type RunState,
 } from "@/lib/agents/schema";
+import {
+  activeRunStaleAfterMs,
+  getRunAgeMs,
+  getRunOperatorHealth,
+  isStaleActiveRun,
+} from "@/lib/runs/operator-health";
+import { getPublishOperatorGuide } from "@/lib/runs/publish-guide";
 
 function formatTimestamp(value: string | null) {
   if (!value) {
@@ -93,6 +108,50 @@ function renderCompactText(value: string | null | undefined, fallback: string) {
   return trimmed ? trimmed : fallback;
 }
 
+function formatRelativeAge(ageMs: number) {
+  const minutes = Math.max(1, Math.round(ageMs / (60 * 1000)));
+
+  if (minutes < 60) {
+    return `${minutes}분 전 업데이트`;
+  }
+
+  const hours = Math.round((minutes / 60) * 10) / 10;
+
+  if (hours < 24) {
+    return `${hours}시간 전 업데이트`;
+  }
+
+  const days = Math.round((hours / 24) * 10) / 10;
+  return `${days}일 전 업데이트`;
+}
+
+function healthBadgeVariant(state: ReturnType<typeof getRunOperatorHealth>["state"]) {
+  switch (state) {
+    case "failed":
+    case "stale":
+      return "destructive" as const;
+    case "attention":
+    case "waiting":
+      return "secondary" as const;
+    case "published":
+      return "default" as const;
+    default:
+      return "outline" as const;
+  }
+}
+
+function HealthIcon({ state }: { state: ReturnType<typeof getRunOperatorHealth>["state"] }) {
+  switch (state) {
+    case "failed":
+    case "stale":
+      return <AlertTriangle className="h-4 w-4" />;
+    case "published":
+      return <CheckCircle2 className="h-4 w-4" />;
+    default:
+      return <Clock3 className="h-4 w-4" />;
+  }
+}
+
 function nextActionLabel(run: RunState) {
   switch (run.publish_result.next_action) {
     case "retrying":
@@ -151,6 +210,11 @@ export function RunOperationsLog({
 }: RunOperationsLogProps) {
   const approvalHistory = [...(run?.approval_history ?? [])].reverse();
   const publishAttempts = [...(run?.publish_attempts ?? [])].reverse();
+  const operatorHealth = getRunOperatorHealth(run);
+  const publishGuide = run ? getPublishOperatorGuide(run.publish_result) : null;
+  const staleWindowHours = Math.round(activeRunStaleAfterMs / (60 * 60 * 1000));
+  const staleRun = run ? isStaleActiveRun(run) : false;
+  const runAgeLabel = run ? formatRelativeAge(getRunAgeMs(run)) : null;
   const canUseOperatorActions = hasOperatorSecret;
   const canProcessApprovedRun =
     run?.workflow_status === "script_approved" &&
@@ -168,6 +232,9 @@ export function RunOperationsLog({
   const showPublishControls =
     run?.publish_result.next_action === "manual_retry" ||
     run?.publish_result.next_action === "manual_fix_required";
+  const hasPendingPublishControl =
+    run?.publish_result.status === "failed" && showPublishControls;
+  const hasTelegramPublishControlMessage = Boolean(run?.telegram.publish_control_message_id);
 
   return (
     <Card className="border-black/5 bg-white/85 shadow-[0_18px_40px_rgba(44,34,24,0.08)]">
@@ -191,6 +258,66 @@ export function RunOperationsLog({
         </div>
 
         <div className="rounded-[22px] bg-[#faf8fb] px-4 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[12px] font-black uppercase tracking-[0.2em] text-zinc-400">
+                Run health
+              </div>
+              <div className="mt-2 flex items-center gap-2 text-lg font-black tracking-[-0.04em] text-[#17171b]">
+                <HealthIcon state={operatorHealth.state} />
+                <span>{operatorHealth.label}</span>
+              </div>
+            </div>
+            <Badge variant={healthBadgeVariant(operatorHealth.state)}>
+              {operatorHealth.state}
+            </Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {run ? <Badge variant="secondary">last update {formatTimestamp(run.updated_at)}</Badge> : null}
+            {runAgeLabel ? <Badge variant="secondary">{runAgeLabel}</Badge> : null}
+            {staleRun ? <Badge variant="outline">stale threshold {staleWindowHours}h</Badge> : null}
+          </div>
+          <div className="mt-3 text-sm font-bold leading-6 text-zinc-600">
+            {operatorHealth.summary}
+          </div>
+          <div className="mt-2 text-xs font-bold leading-5 text-zinc-500">
+            {operatorHealth.recommendedAction}
+          </div>
+          {staleRun ? (
+            <div className="mt-3 rounded-[18px] border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-5 text-amber-900">
+              6시간 넘게 업데이트가 없는 non-terminal run은 다음 research dispatch 전에 자동 정리 대상이
+              될 수 있습니다.
+            </div>
+          ) : null}
+          {staleRun && run ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onRefreshRun}
+                disabled={isRefreshBusy || !onRefreshRun}
+              >
+                {isRefreshBusy ? (
+                  <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                )}
+                stale 상태 새로고침
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={onFailRun}
+                disabled={isFailRunBusy || !onFailRun || !canUseOperatorActions}
+              >
+                {isFailRunBusy ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
+                stale run 종료
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-[22px] bg-[#faf8fb] px-4 py-4">
           <div className="text-[12px] font-black uppercase tracking-[0.2em] text-zinc-400">
             Publish status
           </div>
@@ -200,7 +327,44 @@ export function RunOperationsLog({
               <Badge variant="secondary">retryable</Badge>
             ) : null}
             {run ? <Badge variant="secondary">{nextActionLabel(run)}</Badge> : null}
+            {publishGuide ? <Badge variant="secondary">{publishGuide.badge}</Badge> : null}
           </div>
+          {publishGuide ? (
+            <div className="mt-3 rounded-[18px] border border-black/5 bg-white px-4 py-4">
+              <div className="text-sm font-black text-[#17171b]">{publishGuide.headline}</div>
+              <div className="mt-2 text-sm font-bold leading-6 text-zinc-600">
+                {publishGuide.summary}
+              </div>
+              <div className="mt-2 text-xs font-bold leading-5 text-zinc-500">
+                {publishGuide.recommendedAction}
+              </div>
+            </div>
+          ) : null}
+          {hasPendingPublishControl ? (
+            <div className="mt-3 rounded-[18px] border border-black/5 bg-white px-4 py-4">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={hasTelegramPublishControlMessage ? "secondary" : "outline"}>
+                  {hasTelegramPublishControlMessage
+                    ? "telegram control sent"
+                    : run?.telegram.last_chat_id
+                      ? "telegram control not confirmed"
+                      : "telegram chat missing"}
+                </Badge>
+                {run?.telegram.publish_control_message_id ? (
+                  <Badge variant="outline">
+                    message {run.telegram.publish_control_message_id}
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="mt-2 text-xs font-bold leading-5 text-zinc-500">
+                {hasTelegramPublishControlMessage
+                  ? "운영자가 Telegram 제어 메시지에서 retry 또는 stop을 바로 선택할 수 있습니다."
+                  : run?.telegram.last_chat_id
+                    ? "이 run은 publish control 대기 중이지만 Telegram 전송이 확인되지 않았습니다. 필요하면 UI 버튼으로 바로 처리하세요."
+                    : "이 run에는 연결된 Telegram chat이 없어 publish control이 UI 중심으로만 진행됩니다."}
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 text-sm font-bold leading-6 text-zinc-600">
             {run
               ? renderCompactText(

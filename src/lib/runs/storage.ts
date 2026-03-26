@@ -339,7 +339,7 @@ export async function readArtifactText(runId: string, filename: string) {
   return buffer.toString("utf8");
 }
 
-function guessArtifactContentType(filename: string) {
+export function guessArtifactContentType(filename: string) {
   if (filename.endsWith(".json")) {
     return "application/json; charset=utf-8";
   }
@@ -394,10 +394,23 @@ export async function listArtifacts(runId: string) {
 
   ensurePersistentStorageConfigured("Run artifacts");
   const filenames = await readdir(getRunDir(runId));
-  return filenames.map((filename) => ({
-    filename,
-    pathname: getRunArtifactPath(runId, filename),
-  }));
+  const artifactEntries = await Promise.all(
+    filenames.map(async (filename) => {
+      const pathname = getRunArtifactPath(runId, filename);
+      const entry = await stat(pathname).catch(() => null);
+
+      if (!entry?.isFile()) {
+        return null;
+      }
+
+      return {
+        filename,
+        pathname,
+      };
+    }),
+  );
+
+  return artifactEntries.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 }
 
 export async function clearRun(runId: string) {

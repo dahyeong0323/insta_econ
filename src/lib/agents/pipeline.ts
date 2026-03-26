@@ -2,41 +2,61 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
 import {
+  buildFallbackDesignPlan,
+  buildFallbackProject,
+  buildFallbackSourceBundle,
+} from "@/lib/agents/fallback";
+import {
+  chooseEditorialSlideCount,
+  getEditorialRoleSequence,
+  getAllowedPatternsForRole,
+  getDefaultThemeName,
+  getNarrativeTemperature,
+  getQuestionBadge,
+  patternModuleTypeMap,
+} from "@/lib/design/editorial-core";
+import {
+  contentPlannerInput,
+  contentPlannerInstructions,
+} from "@/lib/agents/skills/content-planner";
+import {
+  contentInput,
+  contentMarketerInstructions,
+} from "@/lib/agents/skills/contents-marketer";
+import {
+  designerInput,
+  designerInstructions,
+} from "@/lib/agents/skills/designer";
+import {
+  qaRepairInput,
+  qaRepairInstructions,
+  regenerateInput,
+} from "@/lib/agents/skills/qa-repair";
+import { getAudienceInstructions } from "@/lib/agents/skills/shared";
+import { sourceParserInstructions } from "@/lib/agents/skills/source-parser";
+import { renderStandaloneSlideHtml, withStandaloneHtml } from "@/lib/agents/render";
+import {
   carouselProjectSchema,
+  designPlanSchema,
+  editorialThemeName,
+  maxCarouselSlides,
+  minCarouselSlides,
   qaReportSchema,
   slideModuleSchema,
   slideRoleValues,
   sourceBundleSchema,
   type CarouselProject,
+  type DesignPlan,
+  type DesignPlanSlide,
   type QaReport,
   type Slide,
   type SourceBundle,
 } from "@/lib/agents/schema";
-import {
-  buildFallbackProject,
-  buildFallbackSourceBundle,
-} from "@/lib/agents/fallback";
-import {
-  contentInput,
-  contentMarketerInstructions,
-  designerInput,
-  designerInstructions,
-  getAudienceInstructions,
-  qaRepairInput,
-  qaRepairInstructions,
-  regenerateInput,
-  sourceParserInstructions,
-} from "@/lib/agents/prompts";
-import { withStandaloneHtml } from "@/lib/agents/render";
-import {
-  getOpenAIClient,
-  getPdfModel,
-  getTextModel,
-} from "@/lib/openai/client";
+import { getOpenAIClient, getPdfModel, getTextModel } from "@/lib/openai/client";
 
 const slideCopySchema = z
   .object({
-    slide_number: z.number().int().min(1).max(8),
+    slide_number: z.number().int().min(1).max(maxCarouselSlides),
     role: z.enum(slideRoleValues),
     headline: z.string().min(1).max(120),
     body: z.string().min(1).max(280),
@@ -46,34 +66,33 @@ const slideCopySchema = z
   })
   .strict();
 
-const copyDeckSchema = z
+export const copyDeckSchema = z
   .object({
     brand_label: z.string().min(1).max(40),
     project_title: z.string().min(1).max(120),
     caption: z.string().min(1).max(1200),
-    slides: z.array(slideCopySchema).length(8),
+    slides: z.array(slideCopySchema).min(minCarouselSlides).max(maxCarouselSlides),
   })
   .strict();
 
-const slideDesignSchema = z
+const designSlideSchema = z
   .object({
-    slide_number: z.number().int().min(1).max(8),
+    slide_number: z.number().int().min(1).max(maxCarouselSlides),
     question_badge: z.string().min(1).max(32),
-    visual_tone: z.enum(["cover", "light", "dark"]),
     module: slideModuleSchema,
   })
   .strict();
 
-const designDeckSchema = z
+export const designDeckSchema = z
   .object({
     theme_name: z.string().min(1).max(40),
-    slides: z.array(slideDesignSchema).length(8),
+    slides: z.array(designSlideSchema).min(minCarouselSlides).max(maxCarouselSlides),
   })
   .strict();
 
 const repairSlideSchema = z
   .object({
-    slide_number: z.number().int().min(1).max(8),
+    slide_number: z.number().int().min(1).max(maxCarouselSlides),
     question_badge: z.string().min(1).max(32),
     headline: z.string().min(1).max(120),
     body: z.string().min(1).max(280),
@@ -86,7 +105,7 @@ const repairSlideSchema = z
 
 const qaRepairDeckSchema = z
   .object({
-    repairs: z.array(repairSlideSchema).min(1).max(8),
+    repairs: z.array(repairSlideSchema).min(1).max(maxCarouselSlides),
   })
   .strict();
 
@@ -100,6 +119,8 @@ type BuildInput = {
 
 type RawSlide = Omit<Slide, "standalone_html">;
 type RawProject = Omit<CarouselProject, "slides"> & { slides: RawSlide[] };
+export type CopyDeck = z.infer<typeof copyDeckSchema>;
+export type DesignDeck = z.infer<typeof designDeckSchema>;
 
 export type QaLoopResult = {
   project: CarouselProject;
@@ -125,42 +146,18 @@ function splitSentences(text: string) {
 
 function shortenText(text: string, sentenceLimit: number, charLimit: number) {
   const bySentence = splitSentences(text).slice(0, sentenceLimit).join(" ");
+  const base = bySentence || text.trim();
 
-  if (!bySentence) {
-    return text.trim();
+  if (base.length <= charLimit) {
+    return base;
   }
 
-  if (bySentence.length <= charLimit) {
-    return bySentence;
-  }
-
-  return `${bySentence.slice(0, Math.max(0, charLimit - 1)).trim()}…`;
-}
-
-function looksLikeMetaInstruction(text: string | null | undefined) {
-  if (!text) {
-    return false;
-  }
-
-  const normalized = text.trim();
-
-  if (!normalized) {
-    return false;
-  }
-
-  return (
-    /\b(bottom module|dark closing slide|keep it sparse|use a crisp|works better than|fits the .* narrative|with lots of white space|one clean comparison|extra icons|focal number block|editorial table|linear historical reading)\b/i.test(
-      normalized,
-    ) ||
-    /^\s*hook\s*$/iu.test(normalized)
-  );
+  return `${base.slice(0, Math.max(0, charLimit - 1)).trim()}…`;
 }
 
 function stripSourceLeadins(text: string) {
   return text
-    .replace(/\b(이\s+소스는|소스는|소스에\s+따르면|소스에\s+의하면|원문은|자료는|이\s+글은)\s+/gu, "")
-    .replace(/^에 따르면\s+/u, "")
-    .replace(/^에 의하면\s+/u, "")
+    .replace(/\b(텍스트를 읽으면|자료에 따르면|본문에서|자료에서는)\s+/gu, "")
     .trim();
 }
 
@@ -169,97 +166,28 @@ function sanitizeReaderText(text: string | null | undefined) {
     return null;
   }
 
-  const lines = text
-    .split("\n")
-    .map((line) => stripSourceLeadins(line.trim()))
-    .filter(Boolean)
-    .filter((line) => !/^(null|none|n\/a|없음)$/iu.test(line))
-    .filter((line) => !looksLikeMetaInstruction(line));
-
-  const sanitized = lines.join("\n").trim();
-  return sanitized || null;
+  const normalized = stripSourceLeadins(text.replace(/\s+\n/g, "\n").trim());
+  return normalized || null;
 }
 
-function normalizeBadge(slideNumber: number, badge: string) {
-  if (slideNumber === 1) {
-    return "보리의 10대를 위한 경제";
-  }
-
-  if (slideNumber === 8) {
-    return "Q. 마지막으로";
-  }
-
-  return badge.trim() || "Q";
+function textLength(text: string | null | undefined) {
+  return text?.trim().length ?? 0;
 }
 
-function normalizeClosingSlide(slide: RawSlide) {
-  const bodySentences = splitSentences(slide.body);
-  let body = slide.body.trim();
-  let savePoint = slide.save_point?.trim() || null;
-  let emphasis = slide.emphasis?.trim() || null;
-
-  if (bodySentences.length > 2 || body.length > 170) {
-    body = shortenText(body, 2, 150);
-    if (!savePoint && bodySentences.length > 2) {
-      savePoint = shortenText(bodySentences.slice(2).join(" "), 1, 90);
-    }
-  }
-
-  if (!savePoint && /저장|공유|친구|같이/u.test(body)) {
-    const matched = body.match(/[^.?!]*?(저장|공유|친구|같이)[^.?!]*[.?!]?/u);
-    if (matched) {
-      savePoint = matched[0].trim();
-      body = body.replace(matched[0], "").replace(/\s{2,}/g, " ").trim();
-    }
-  }
-
-  if (!emphasis && /(좋은 돈|가치 저장|시간을 버틴다|미래 계획)/u.test(`${slide.headline} ${body}`)) {
-    emphasis = "좋은 돈은 시간을 버텨요";
-  }
-
-  return {
-    ...slide,
-    question_badge: "Q. 마지막으로",
-    body: stripSourceLeadins(body),
-    emphasis: emphasis ? stripSourceLeadins(emphasis) : null,
-    save_point: savePoint ? stripSourceLeadins(savePoint) : null,
-  };
+function getRoleSequence(totalSlides: number): Slide["role"][] {
+  return getEditorialRoleSequence(totalSlides);
 }
 
-function normalizeNumberModule(slide: RawSlide) {
-  if (slide.module.type !== "number-spotlight") {
-    return slide;
-  }
+function getDefaultPlanSlideCount(bundle: SourceBundle) {
+  return chooseEditorialSlideCount(bundle.facts.length, bundle.numbers.length);
+}
 
-  const item = slide.module.items[0];
-  const label =
-    item?.label && !/^(number|숫자|수치)$/iu.test(item.label)
-      ? stripSourceLeadins(item.label)
-      : "무슨 숫자냐면";
-  const title = stripSourceLeadins(
-    item?.title || item?.value || slide.emphasis || slide.module.title,
-  );
-  const value = stripSourceLeadins(
-    item?.value && item.value !== item.title
-      ? item.value
-      : slide.save_point || slide.module.footer || slide.body,
-  );
-
-  return {
-    ...slide,
-    module: {
-      ...slide.module,
-      title: stripSourceLeadins(slide.module.title || "숫자로 보면"),
-      items: [
-        {
-          ...item,
-          label,
-          title,
-          value,
-        },
-      ],
-    },
-  };
+function normalizeQuestionBadge(
+  slideNumber: number,
+  totalSlides: number,
+  badge: string | null | undefined,
+) {
+  return sanitizeReaderText(badge) || getQuestionBadge(slideNumber, totalSlides);
 }
 
 function sanitizeModule(module: RawSlide["module"]) {
@@ -271,246 +199,91 @@ function sanitizeModule(module: RawSlide["module"]) {
     items: module.items.map((item, index) => ({
       ...item,
       label: sanitizeReaderText(item.label) || `포인트 ${index + 1}`,
-      title: sanitizeReaderText(item.title) || "핵심",
-      value: sanitizeReaderText(item.value) || "설명이 비어 있어 다시 정리했어요.",
+      title: sanitizeReaderText(item.title) || `핵심 ${index + 1}`,
+      value: sanitizeReaderText(item.value) || "이 문장을 더 짧고 분명하게 다시 써 주세요.",
       note: sanitizeReaderText(item.note),
     })),
   };
 }
 
-function hasStrongNumericHook(slide: RawSlide) {
-  const probe = [
-    slide.headline,
-    slide.body,
-    slide.emphasis,
-    slide.save_point,
-    slide.module.title,
-    slide.module.subtitle,
-    slide.module.footer,
-    ...slide.module.items.flatMap((item) => [
-      item.label,
-      item.title,
-      item.value,
-      item.note,
-    ]),
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  if (!/\d/.test(probe)) {
-    return false;
-  }
-
-  if (/(24시간|하루의 시간|정해진 시간|하루는 누구에게나|한 가지를 먼저|1단계|2단계|3단계)/u.test(probe)) {
-    return false;
-  }
-
-  return /(%|퍼센트|원|만원|달러|배|명|주가|환율|이자|금리|가격)/u.test(probe);
-}
-
-function hasNumericOnlyChecklistLabels(slide: RawSlide | Slide) {
-  return (
-    slide.module.type === "checklist-table" &&
-    slide.module.items.some((item) => /^\d+$/u.test(item.label.trim()))
-  );
-}
-
-function hasWeakNumberSpotlight(slide: RawSlide | Slide) {
-  if (slide.module.type !== "number-spotlight") {
-    return false;
-  }
-
-  const probe = [
-    slide.headline,
-    slide.body,
-    slide.module.title,
-    slide.module.items[0]?.label,
-    slide.module.items[0]?.title,
-    slide.module.items[0]?.value,
-    slide.module.footer,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  if (!/\d/.test(probe)) {
-    return true;
-  }
-
-  if (/(24시간|하루의 시간|정해진 시간|하루는 누구에게나)/u.test(probe)) {
-    return true;
-  }
-
-  return !/(%|퍼센트|원|만원|달러|배|명|주가|환율|이자|금리|가격)/u.test(probe);
-}
-
-function hasTimelineAlignmentRisk(slide: RawSlide | Slide) {
-  if (slide.module.type !== "timeline") {
-    return false;
-  }
-
-  if (slide.module.items.length < 3 || slide.module.items.length > 4) {
-    return true;
-  }
-
-  const lengths = slide.module.items.map(
-    (item) => textLength(item.title) + textLength(item.value),
-  );
-  const max = Math.max(...lengths);
-  const min = Math.min(...lengths);
-
-  return min > 0 && max / min > 2.2;
-}
-
-function getChecklistLabel(label: string | null | undefined, index: number) {
-  const normalized = sanitizeReaderText(label)?.trim();
-
-  if (normalized && !/^\d+$/u.test(normalized)) {
-    return shortenText(normalized, 1, 12);
-  }
-
-  return `포인트 ${index + 1}`;
-}
-
-function convertModuleToChecklist(slide: RawSlide) {
-  const title =
-    sanitizeReaderText(slide.module.title) ||
-    sanitizeReaderText(slide.headline) ||
-    "핵심 정리";
-  const items =
-    slide.module.items.length > 0
-      ? slide.module.items
-      : [
-        {
-          label: "포인트 1",
-          title: sanitizeReaderText(slide.emphasis) || sanitizeReaderText(slide.headline) || "핵심",
-          value:
-            sanitizeReaderText(slide.save_point) ||
-            sanitizeReaderText(slide.body) ||
-            "핵심 설명을 다시 정리해 주세요.",
-          note: null,
-          accent: "orange" as const,
-        },
-      ];
+function normalizeSlideWithPlan(slide: RawSlide, planSlide: DesignPlanSlide, totalSlides: number) {
+  const allowedPatterns = getAllowedPatternsForRole(planSlide.role);
+  const layoutPattern = allowedPatterns.includes(slide.layout_pattern)
+    ? slide.layout_pattern
+    : planSlide.layout_pattern;
 
   return {
     ...slide,
-    module: {
-      ...slide.module,
-      type: "checklist-table" as const,
-      title: shortenText(title, 1, 48),
-      footer: slide.module.footer ? shortenText(slide.module.footer, 1, 78) : null,
-      items: items.slice(0, 4).map((item, index) => ({
-        ...item,
-        label: getChecklistLabel(item.label, index),
-        title: shortenText(
-          sanitizeReaderText(item.title) || sanitizeReaderText(item.label) || `핵심 ${index + 1}`,
-          1,
-          24,
-        ),
-        value: shortenText(
-          sanitizeReaderText(item.value) ||
-            sanitizeReaderText(item.note) ||
-            sanitizeReaderText(slide.body) ||
-            "핵심 설명을 다시 정리해 주세요.",
-          1,
-          40,
-        ),
-        note: item.note ? shortenText(item.note, 1, 44) : null,
-        accent: item.accent ?? "orange",
-      })),
-    },
-  };
-}
-
-function applySafeModuleFallbacks(slide: RawSlide) {
-  let next = slide;
-
-  if (hasWeakNumberSpotlight(next)) {
-    next = convertModuleToChecklist(next);
-  }
-
-  if (hasTimelineAlignmentRisk(next) || hasDenseTimeline(next)) {
-    next = convertModuleToChecklist(next);
-  }
-
-  return next;
-}
-
-function coerceModuleForRole(slide: RawSlide): RawSlide {
-  if (slide.slide_number === 1 || slide.slide_number === 8) {
-    return slide;
-  }
-
-  let nextType = slide.module.type;
-
-  switch (slide.role) {
-    case "core":
-      nextType = "checklist-table";
-      break;
-    case "why":
-      nextType = "before-after";
-      break;
-    case "example":
-      nextType = "timeline";
-      break;
-    case "compare":
-      nextType = slide.module.items.length >= 3 ? "three-card-summary" : "before-after";
-      break;
-    case "number_or_steps":
-      nextType = hasStrongNumericHook(slide) ? "number-spotlight" : "checklist-table";
-      break;
-    case "recap":
-      nextType = slide.module.items.length <= 1 ? "message-banner" : "three-card-summary";
-      break;
-    default:
-      break;
-  }
-
-  if (nextType === slide.module.type) {
-    return slide;
-  }
-
-  return {
-    ...slide,
-    module: {
-      ...slide.module,
-      type: nextType,
-    },
-  };
-}
-
-function normalizeSlide(slide: RawSlide, index: number) {
-  const baseSlide: RawSlide = {
-    ...slide,
-    question_badge: normalizeBadge(slide.slide_number, slide.question_badge),
+    slide_number: planSlide.slide_number,
+    role: planSlide.role,
+    visual_tone: planSlide.visual_tone,
+    layout_pattern: layoutPattern,
+    narrative_phase: planSlide.narrative_phase,
+    module_weight: planSlide.module_weight,
+    text_density: planSlide.text_density,
+    question_badge: normalizeQuestionBadge(planSlide.slide_number, totalSlides, slide.question_badge),
     headline: sanitizeReaderText(slide.headline) || slide.headline.trim(),
     body: sanitizeReaderText(slide.body) || slide.body.trim(),
     emphasis: sanitizeReaderText(slide.emphasis),
     save_point: sanitizeReaderText(slide.save_point),
     source_excerpt: sanitizeReaderText(slide.source_excerpt) || slide.source_excerpt.trim(),
-    module: sanitizeModule(slide.module),
+    module: {
+      ...sanitizeModule(slide.module),
+      type: patternModuleTypeMap[layoutPattern],
+    },
   };
-
-  const normalized =
-    index === 7 || slide.slide_number === 8
-      ? normalizeClosingSlide(baseSlide)
-      : baseSlide;
-
-  return applySafeModuleFallbacks(normalizeNumberModule(coerceModuleForRole(normalized)));
 }
 
-function normalizeProject(project: RawProject) {
+function normalizeProject(project: RawProject, plan: DesignPlan) {
   return carouselProjectSchema.parse(
     withStandaloneHtml({
       ...project,
-      brand_label: "보리의 10대를 위한 경제",
-      slides: project.slides.map((slide, index) => normalizeSlide(slide, index)),
+      theme_name: editorialThemeName,
+      slides: ordered(project.slides).map((slide, index) =>
+        normalizeSlideWithPlan(slide, plan.slides[index]!, plan.slides.length),
+      ),
     }),
   );
 }
 
+function buildFallbackDecks(bundle: SourceBundle, designPlan: DesignPlan) {
+  const fallbackProject = buildFallbackProject(bundle, designPlan);
+
+  return {
+    copyDeck: copyDeckSchema.parse({
+      brand_label: fallbackProject.brand_label,
+      project_title: fallbackProject.project_title,
+      caption: fallbackProject.caption,
+      slides: fallbackProject.slides.map((slide) => ({
+        slide_number: slide.slide_number,
+        role: slide.role,
+        headline: slide.headline,
+        body: slide.body,
+        emphasis: slide.emphasis,
+        save_point: slide.save_point,
+        source_excerpt: slide.source_excerpt,
+      })),
+    }),
+    designDeck: designDeckSchema.parse({
+      theme_name: fallbackProject.theme_name,
+      slides: fallbackProject.slides.map((slide) => ({
+        slide_number: slide.slide_number,
+        question_badge: slide.question_badge,
+        module: slide.module,
+      })),
+    }),
+    project: fallbackProject,
+  };
+}
+
+function stripStandaloneHtml(slide: Slide): RawSlide {
+  const rawSlide = { ...slide } as RawSlide & { standalone_html?: string };
+  delete rawSlide.standalone_html;
+  return rawSlide;
+}
+
 function sourceExcerptLooksGrounded(bundle: SourceBundle, excerpt: string) {
-  const probe = excerpt.trim().slice(0, 12);
+  const probe = excerpt.trim().slice(0, 14);
   return probe.length === 0 || bundle.extracted_text.includes(probe);
 }
 
@@ -518,14 +291,9 @@ function actionableSlideNumbers(report: QaReport) {
   const slideNumbers = new Set<number>();
 
   for (const issue of report.issues) {
-    const match = issue.message.match(/(\d+)번/u);
+    const match = issue.message.match(/^Slide (\d+)/u);
     if (match) {
       slideNumbers.add(Number(match[1]));
-      continue;
-    }
-
-    if (/마지막 슬라이드|클로징/u.test(issue.message)) {
-      slideNumbers.add(8);
     }
   }
 
@@ -536,24 +304,85 @@ function hasActionableIssues(report: QaReport) {
   return report.high_count > 0 || report.medium_count > 0;
 }
 
-function textLength(text: string | null | undefined) {
-  return text?.trim().length ?? 0;
+function collectPlanMetadataValidatorIssues(
+  slide: Slide,
+  planSlide: DesignPlanSlide,
+) {
+  const issues: QaReport["issues"] = [];
+
+  const comparableFields = [
+    { label: "role", actual: slide.role, expected: planSlide.role },
+    {
+      label: "visual_tone",
+      actual: slide.visual_tone,
+      expected: planSlide.visual_tone,
+    },
+    {
+      label: "narrative_phase",
+      actual: slide.narrative_phase,
+      expected: planSlide.narrative_phase,
+    },
+    {
+      label: "module_weight",
+      actual: slide.module_weight,
+      expected: planSlide.module_weight,
+    },
+    {
+      label: "text_density",
+      actual: slide.text_density,
+      expected: planSlide.text_density,
+    },
+  ] as const;
+
+  for (const field of comparableFields) {
+    if (field.actual !== field.expected) {
+      issues.push({
+        severity: "medium",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: ${field.label} drifted away from the design plan.`,
+      });
+    }
+  }
+
+  return issues;
 }
 
-function moduleTextLength(slide: RawSlide | Slide) {
-  return [
-    slide.module.title,
-    slide.module.subtitle,
-    slide.module.footer,
-    ...slide.module.items.flatMap((item) => [
-      item.label,
-      item.title,
-      item.value,
-      item.note,
-    ]),
-  ]
-    .filter(Boolean)
-    .join(" ").length;
+const directColorLiteralPattern = /#[0-9a-fA-F]{3,8}\b|(?:rgb|hsl)a?\([^)]*\)/u;
+
+function stripRootTokenBlocks(css: string) {
+  return css.replace(/:root\s*\{[\s\S]*?\}/gu, "");
+}
+
+function usesDirectColorLiteralsOutsideTokens(html: string) {
+  const inlineHtml = html.replace(/<style[^>]*>[\s\S]*?<\/style>/giu, "");
+  if (/style="[^"]*(?:#[0-9a-fA-F]{3,8}\b|(?:rgb|hsl)a?\([^"]*\))[^"]*"/u.test(inlineHtml)) {
+    return true;
+  }
+
+  const stylesheet = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/giu)]
+    .map((match) => match[1])
+    .join("\n");
+  const stylesheetWithoutTokens = stripRootTokenBlocks(stylesheet);
+
+  return directColorLiteralPattern.test(stylesheetWithoutTokens);
+}
+
+function hasWeakSpotlight(slide: RawSlide | Slide) {
+  return slide.module.type === "number-spotlight";
+}
+
+function hasDenseTimeline(slide: RawSlide | Slide) {
+  if (slide.module.type !== "timeline") {
+    return false;
+  }
+
+  if (slide.module.items.length < 3 || slide.module.items.length > 4) {
+    return true;
+  }
+
+  return slide.module.items.some(
+    (item) => textLength(item.title) > 20 || textLength(item.value) > 34,
+  );
 }
 
 function hasDenseChecklist(slide: RawSlide | Slide) {
@@ -567,76 +396,21 @@ function hasDenseChecklist(slide: RawSlide | Slide) {
 
   return slide.module.items.some(
     (item) =>
-      textLength(item.label) > 14 ||
-      textLength(item.title) > 26 ||
+      textLength(item.label) > 16 ||
+      textLength(item.title) > 28 ||
       textLength(item.value) > 42,
   );
 }
 
-function hasDenseTimeline(slide: RawSlide | Slide) {
-  if (slide.module.type !== "timeline") {
+function hasNumericOnlyChecklistLabels(slide: RawSlide | Slide) {
+  if (slide.module.type !== "checklist-table") {
     return false;
   }
 
-  if (slide.module.items.length > 4) {
-    return true;
-  }
-
-  return slide.module.items.some(
-    (item) =>
-      textLength(item.label) > 8 ||
-      textLength(item.title) > 18 ||
-      textLength(item.value) > 34,
-  );
-}
-
-function hasDenseCodeWindow(slide: RawSlide | Slide) {
-  if (slide.module.type !== "code-window") {
-    return false;
-  }
-
-  if (slide.module.items.length > 4) {
-    return true;
-  }
-
-  if (textLength(slide.module.footer) > 68) {
-    return true;
-  }
-
-  return slide.module.items.some(
-    (item) => textLength(item.title) > 28 || textLength(item.value) > 90,
-  );
-}
-
-function hasDenseCardModule(slide: RawSlide | Slide) {
-  if (!["before-after", "three-card-summary", "message-banner"].includes(slide.module.type)) {
-    return false;
-  }
-
-  if (slide.module.type === "before-after" && textLength(slide.module.footer) > 72) {
-    return true;
-  }
-
-  if (slide.module.type === "message-banner") {
-    return (
-      textLength(slide.module.items[0]?.title) > 34 ||
-      textLength(slide.module.items[0]?.value) > 88
-    );
-  }
-
-  return slide.module.items.some(
-    (item) =>
-      textLength(item.title) > 28 ||
-      textLength(item.value) > 70 ||
-      textLength(item.note) > 52,
-  );
+  return slide.module.items.every((item) => /^\d+$/u.test(item.label.trim()));
 }
 
 function isVisuallyThin(slide: RawSlide | Slide) {
-  if (slide.slide_number === 1 || slide.slide_number === 8) {
-    return false;
-  }
-
   if (slide.visual_tone !== "light") {
     return false;
   }
@@ -647,284 +421,94 @@ function isVisuallyThin(slide: RawSlide | Slide) {
     textLength(slide.emphasis) +
     textLength(slide.save_point);
 
-  return copyChars < 120 && moduleTextLength(slide) < 140;
+  return (
+    copyChars < 110 ||
+    (slide.module.type !== "message-banner" && slide.module.items.length < 2)
+  );
 }
 
-function isVisuallyCrowded(slide: RawSlide | Slide) {
-  const copyChars =
-    textLength(slide.headline) +
-    textLength(slide.body) +
-    textLength(slide.emphasis) +
-    textLength(slide.save_point);
+function repairSlideHeuristically(
+  slide: Slide,
+  bundle: SourceBundle,
+  planSlide: DesignPlanSlide | null,
+): RawSlide {
+  const targetPattern = planSlide?.layout_pattern ?? slide.layout_pattern;
 
-  return copyChars > 320 || moduleTextLength(slide) > 520;
-}
-
-function heuristicRepairSlide(slide: Slide, bundle: SourceBundle) {
-  let next: RawSlide = {
+  return {
     slide_number: slide.slide_number,
-    role: slide.role,
+    role: planSlide?.role ?? slide.role,
+    visual_tone: planSlide?.visual_tone ?? slide.visual_tone,
+    layout_pattern: targetPattern,
+    narrative_phase: planSlide?.narrative_phase ?? slide.narrative_phase,
+    module_weight: planSlide?.module_weight ?? slide.module_weight,
+    text_density: planSlide?.text_density ?? slide.text_density,
     question_badge: slide.question_badge,
-    visual_tone: slide.visual_tone,
-    headline: stripSourceLeadins(slide.headline.trim()),
-    body: stripSourceLeadins(slide.body.trim()),
-    emphasis: slide.emphasis ? stripSourceLeadins(slide.emphasis.trim()) : null,
-    save_point: slide.save_point ? stripSourceLeadins(slide.save_point.trim()) : null,
-    source_excerpt: slide.source_excerpt.trim(),
-    module: sanitizeModule(slide.module),
-  };
-
-  if (next.headline.length > 110) {
-    next.headline = shortenText(next.headline, 1, 108);
-  }
-
-  if (next.body.length > 240) {
-    next.body = shortenText(next.body, 2, 220);
-  }
-
-  if (next.module.type === "checklist-table") {
-    next.module = {
-      ...next.module,
-      title: shortenText(next.module.title, 1, 48),
-      footer: next.module.footer ? shortenText(next.module.footer, 1, 78) : null,
-      items: next.module.items.slice(0, 4).map((item, index) => ({
-        ...item,
-        label: shortenText(
-          /^\d+$/u.test((item.label || "").trim()) ? `포인트 ${index + 1}` : item.label || `포인트 ${index + 1}`,
-          1,
-          12,
-        ),
-        title: shortenText(item.title, 1, 24),
-        value: shortenText(item.value, 1, 40),
-        note: item.note ? shortenText(item.note, 1, 44) : null,
-      })),
-    };
-  }
-
-  if (next.module.type === "timeline") {
-    next.module = {
-      ...next.module,
-      title: shortenText(next.module.title, 1, 54),
-      footer: next.module.footer ? shortenText(next.module.footer, 1, 74) : null,
-      items: next.module.items.slice(0, 4).map((item, index) => ({
+    headline: shortenText(stripSourceLeadins(slide.headline), 1, 96),
+    body: shortenText(stripSourceLeadins(slide.body), 2, 220),
+    emphasis: slide.emphasis ? shortenText(stripSourceLeadins(slide.emphasis), 1, 48) : null,
+    save_point: slide.save_point ? shortenText(stripSourceLeadins(slide.save_point), 1, 84) : null,
+    source_excerpt:
+      sourceExcerptLooksGrounded(bundle, slide.source_excerpt)
+        ? slide.source_excerpt
+        : bundle.facts[0]?.source_excerpt ?? bundle.source_summary,
+    module: {
+      ...sanitizeModule({
+        ...slide.module,
+        type: patternModuleTypeMap[targetPattern],
+      }),
+      items: slide.module.items.slice(0, patternModuleTypeMap[targetPattern] === "before-after" ? 2 : 4).map((item, index) => ({
         ...item,
         label:
-          /^\d+$/.test(item.label.trim()) || textLength(item.label) <= 6
-            ? shortenText(item.label, 1, 6)
-            : String(index + 1),
-        title: shortenText(item.title, 1, 18),
-        value: shortenText(item.value, 1, 30),
-        note: item.note ? shortenText(item.note, 1, 34) : null,
-      })),
-    };
-  }
-
-  if (next.module.type === "code-window") {
-    next.module = {
-      ...next.module,
-      title: shortenText(next.module.title, 1, 42),
-      footer: next.module.footer ? shortenText(next.module.footer, 1, 60) : null,
-      items: next.module.items.slice(0, 4).map((item) => ({
-        ...item,
-        title: shortenText(item.title, 1, 26),
-        value: shortenText(item.value, 2, 84),
-        note: item.note ? shortenText(item.note, 1, 38) : null,
-      })),
-    };
-  }
-
-  if (next.module.type === "before-after") {
-    next.module = {
-      ...next.module,
-      footer: next.module.footer ? shortenText(next.module.footer, 1, 68) : null,
-      items: next.module.items.slice(0, 3).map((item) => ({
-        ...item,
-        label: shortenText(item.label, 1, 16),
-        title: shortenText(item.title, 1, 24),
-        value: shortenText(item.value, 2, 68),
+          patternModuleTypeMap[targetPattern] === "before-after"
+            ? index === 0
+              ? "Before"
+              : "After"
+            : sanitizeReaderText(item.label) || `포인트 ${index + 1}`,
+        title: shortenText(sanitizeReaderText(item.title) || item.title, 1, 28),
+        value: shortenText(sanitizeReaderText(item.value) || item.value, 1, 42),
         note: item.note ? shortenText(item.note, 1, 40) : null,
       })),
-    };
-  }
-
-  if (next.module.type === "three-card-summary") {
-    next.module = {
-      ...next.module,
-      title: shortenText(next.module.title, 1, 48),
-      footer: next.module.footer ? shortenText(next.module.footer, 1, 66) : null,
-      items: next.module.items.slice(0, 3).map((item) => ({
-        ...item,
-        label: shortenText(item.label, 1, 16),
-        title: shortenText(item.title, 1, 24),
-        value: shortenText(item.value, 2, 62),
-        note: item.note ? shortenText(item.note, 1, 38) : null,
-      })),
-    };
-  }
-
-  if (next.module.type === "message-banner") {
-    next.module = {
-      ...next.module,
-      title: shortenText(next.module.title, 1, 26),
-      footer: next.module.footer ? shortenText(next.module.footer, 1, 56) : null,
-      items: next.module.items.slice(0, 1).map((item) => ({
-        ...item,
-        label: shortenText(item.label, 1, 18),
-        title: shortenText(item.title, 2, 34),
-        value: shortenText(item.value, 2, 80),
-        note: item.note ? shortenText(item.note, 1, 36) : null,
-      })),
-    };
-  }
-
-  if (next.slide_number === 8) {
-    next = normalizeClosingSlide(next);
-  }
-
-  next = applySafeModuleFallbacks(normalizeNumberModule(coerceModuleForRole(next)));
-
-  if (isVisuallyCrowded(next)) {
-    next.body = shortenText(next.body, 2, 180);
-    next.save_point = next.save_point ? shortenText(next.save_point, 1, 72) : next.save_point;
-  }
-
-  if (!sourceExcerptLooksGrounded(bundle, next.source_excerpt)) {
-    next.source_excerpt = bundle.facts[0]?.source_excerpt ?? bundle.source_summary;
-  }
-
-  return next;
+    },
+  };
 }
 
-async function repairProjectFromQa(
-  bundle: SourceBundle,
-  project: CarouselProject,
-  qaReport: QaReport,
-) {
-  const targetSlides = actionableSlideNumbers(qaReport);
-
-  if (targetSlides.length === 0) {
-    return project;
+function enforcePlanGuardrails(plan: DesignPlan) {
+  if (plan.slides[0]?.role !== "hook" || plan.slides.at(-1)?.role !== "closing") {
+    throw new Error("Design plan must start with hook and end with closing.");
   }
 
-  const heuristicallyRepaired = normalizeProject({
-    ...project,
-    slides: project.slides.map((slide) =>
-      targetSlides.includes(slide.slide_number)
-        ? heuristicRepairSlide(slide, bundle)
-        : {
-            slide_number: slide.slide_number,
-            role: slide.role,
-            question_badge: slide.question_badge,
-            visual_tone: slide.visual_tone,
-            headline: slide.headline,
-            body: slide.body,
-            emphasis: slide.emphasis,
-            save_point: slide.save_point,
-            source_excerpt: slide.source_excerpt,
-            module: slide.module,
-          },
-    ),
-  });
+  for (let index = 0; index < plan.slides.length; index += 1) {
+    const slide = plan.slides[index]!;
+    const allowedPatterns = getAllowedPatternsForRole(slide.role);
 
-  const heuristicQa = runQa(heuristicallyRepaired, bundle);
-  const client = getOpenAIClient();
-
-  if (!client || !hasActionableIssues(heuristicQa)) {
-    return heuristicallyRepaired;
-  }
-
-  try {
-    const response = await client.responses.parse({
-      model: getTextModel(),
-      instructions: `${contentMarketerInstructions()}\n${designerInstructions()}\n${qaRepairInstructions()}\n${getAudienceInstructions("middle_school")}`,
-      input: qaRepairInput(bundle, heuristicallyRepaired, heuristicQa, targetSlides),
-      text: {
-        format: zodTextFormat(qaRepairDeckSchema, "qa_repair_deck"),
-      },
-      max_output_tokens: 2200,
-    });
-
-    const repairDeck = qaRepairDeckSchema.parse(response.output_parsed);
-    const repairedMap = new Map(
-      repairDeck.repairs.map((slide) => [slide.slide_number, slide]),
-    );
-
-    return normalizeProject({
-      ...heuristicallyRepaired,
-      slides: heuristicallyRepaired.slides.map((slide) => {
-        const repaired = repairedMap.get(slide.slide_number);
-
-        if (!repaired) {
-          return {
-            slide_number: slide.slide_number,
-            role: slide.role,
-            question_badge: slide.question_badge,
-            visual_tone: slide.visual_tone,
-            headline: slide.headline,
-            body: slide.body,
-            emphasis: slide.emphasis,
-            save_point: slide.save_point,
-            source_excerpt: slide.source_excerpt,
-            module: slide.module,
-          };
-        }
-
-        return {
-          slide_number: slide.slide_number,
-          role: slide.role,
-          visual_tone: slide.visual_tone,
-          question_badge: repaired.question_badge,
-          headline: repaired.headline,
-          body: repaired.body,
-          emphasis: repaired.emphasis,
-          save_point: repaired.save_point,
-          source_excerpt: repaired.source_excerpt,
-          module: repaired.module,
-        };
-      }),
-    });
-  } catch {
-    return heuristicallyRepaired;
-  }
-}
-
-export async function qaReviewAndRepair(
-  bundle: SourceBundle,
-  project: CarouselProject,
-  maxRepairPasses = 2,
-): Promise<QaLoopResult> {
-  const attempts: QaLoopResult["attempts"] = [];
-  let current = project;
-
-  for (let attempt = 1; attempt <= maxRepairPasses + 1; attempt += 1) {
-    const qaReport = runQa(current, bundle);
-    const slideNumbers = actionableSlideNumbers(qaReport);
-    const canRepair = attempt <= maxRepairPasses && hasActionableIssues(qaReport);
-
-    attempts.push({
-      attempt,
-      qa_report: qaReport,
-      repaired: canRepair && slideNumbers.length > 0,
-      repaired_slides: canRepair ? slideNumbers : [],
-    });
-
-    if (!canRepair || slideNumbers.length === 0) {
-      return {
-        project: current,
-        qaReport,
-        attempts,
-      };
+    if (!allowedPatterns.includes(slide.layout_pattern)) {
+      throw new Error(`Invalid layout pattern ${slide.layout_pattern} for role ${slide.role}.`);
     }
 
-    current = await repairProjectFromQa(bundle, current, qaReport);
-  }
+    if (index > 0 && plan.slides[index - 1]!.layout_pattern === slide.layout_pattern) {
+      throw new Error("Plan repeats the same layout pattern on consecutive slides.");
+    }
 
-  const finalQa = runQa(current, bundle);
-  return {
-    project: current,
-    qaReport: finalQa,
-    attempts,
-  };
+    if (index > 1) {
+      const temperatures = [
+        plan.slides[index - 2]!.emotional_temperature,
+        plan.slides[index - 1]!.emotional_temperature,
+        slide.emotional_temperature,
+      ];
+      if (
+        temperatures[0] === temperatures[1] &&
+        temperatures[1] === temperatures[2]
+      ) {
+        throw new Error("Plan repeats the same emotional temperature three times.");
+      }
+    }
+  }
+}
+
+function buildPlanFallback(bundle: SourceBundle) {
+  const fallback = buildFallbackDesignPlan(bundle);
+  enforcePlanGuardrails(fallback);
+  return fallback;
 }
 
 export async function buildSourceBundle(input: BuildInput) {
@@ -949,7 +533,7 @@ export async function buildSourceBundle(input: BuildInput) {
           content: [
             {
               type: "input_text",
-              text: `Build a grounded source bundle for an economics card-news app.
+              text: `Build a grounded source bundle for a Korean economics card-news app.
 Optional title: ${input.title || "none"}
 
 Locally extracted text:
@@ -979,12 +563,73 @@ ${input.extractedText}`,
   }
 }
 
-export async function buildCarouselProject(
+export async function buildDesignPlan(
   bundle: SourceBundle,
   title?: string | null,
   revisionRequest?: string | null,
 ) {
-  const fallback = buildFallbackProject(bundle);
+  const fallback = buildPlanFallback(bundle);
+  const client = getOpenAIClient();
+
+  if (!client) {
+    return fallback;
+  }
+
+  try {
+    const response = await client.responses.parse({
+      model: getTextModel(),
+      instructions: `${contentPlannerInstructions()}\n${getAudienceInstructions("middle_school")}`,
+      input: contentPlannerInput(bundle, title, revisionRequest),
+      text: {
+        format: zodTextFormat(designPlanSchema, "design_plan"),
+      },
+      max_output_tokens: 2600,
+    });
+
+    const rawPlan = designPlanSchema.parse(response.output_parsed);
+    const totalSlides = rawPlan.slides.length || getDefaultPlanSlideCount(bundle);
+    const roleSequence = getRoleSequence(totalSlides);
+
+    const normalizedPlan = designPlanSchema.parse({
+      ...rawPlan,
+      theme_name: getDefaultThemeName(),
+      slides: ordered(rawPlan.slides).map((slide, index) => {
+        const role = roleSequence[index] ?? slide.role;
+        const allowedPatterns = getAllowedPatternsForRole(role);
+
+        return {
+          ...slide,
+          slide_number: index + 1,
+          role,
+          visual_tone:
+            role === "hook" ? "cover" : role === "closing" ? "dark" : "light",
+          layout_pattern: allowedPatterns.includes(slide.layout_pattern)
+            ? slide.layout_pattern
+            : allowedPatterns[0],
+          emotional_temperature: getNarrativeTemperature(slide.narrative_phase),
+          module_candidates:
+            slide.module_candidates.length > 0
+              ? slide.module_candidates.slice(0, 3)
+              : [patternModuleTypeMap[allowedPatterns[0]]],
+          forbidden_patterns: slide.forbidden_patterns.slice(0, 3),
+        };
+      }),
+    });
+
+    enforcePlanGuardrails(normalizedPlan);
+    return normalizedPlan;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function buildCopyDeck(
+  bundle: SourceBundle,
+  designPlan: DesignPlan,
+  title?: string | null,
+  revisionRequest?: string | null,
+) {
+  const fallback = buildFallbackDecks(bundle, designPlan).copyDeck;
   const client = getOpenAIClient();
 
   if (!client) {
@@ -995,56 +640,258 @@ export async function buildCarouselProject(
     const copyResponse = await client.responses.parse({
       model: getTextModel(),
       instructions: `${contentMarketerInstructions()}\n${getAudienceInstructions("middle_school")}`,
-      input: contentInput(bundle, title, revisionRequest),
+      input: contentInput(bundle, designPlan, title, revisionRequest),
       text: {
         format: zodTextFormat(copyDeckSchema, "copy_deck"),
       },
       max_output_tokens: 3500,
     });
 
-    const copyDeck = copyDeckSchema.parse(copyResponse.output_parsed);
-
-    const designResponse = await client.responses.parse({
-      model: getTextModel(),
-      instructions: designerInstructions(),
-      input: designerInput(bundle, copyDeck, revisionRequest),
-      text: {
-        format: zodTextFormat(designDeckSchema, "design_deck"),
-      },
-      max_output_tokens: 3200,
-    });
-
-    const designDeck = designDeckSchema.parse(designResponse.output_parsed);
-    const orderedDesignSlides = ordered(designDeck.slides);
-
-    const merged: RawProject = {
-      brand_label: copyDeck.brand_label,
-      project_title: copyDeck.project_title,
-      audience: "middle_school",
-      language: "ko",
-      theme_name: designDeck.theme_name,
-      caption: copyDeck.caption,
-      slides: ordered(copyDeck.slides).map((copySlide, index) => ({
-        ...copySlide,
-        question_badge:
-          orderedDesignSlides[index]?.question_badge ??
-          (index === 0 ? "econ-carousel-v2" : index === 7 ? "Q. 마지막으로" : "Q"),
-        visual_tone:
-          orderedDesignSlides[index]?.visual_tone ??
-          (index === 0 ? "cover" : index === 7 ? "dark" : "light"),
-        module: orderedDesignSlides[index]?.module ?? fallback.slides[index].module,
-      })),
-    };
-
-    return normalizeProject(merged);
+    return copyDeckSchema.parse(copyResponse.output_parsed);
   } catch {
     return fallback;
   }
 }
 
+export async function buildDesignDeck(
+  bundle: SourceBundle,
+  designPlan: DesignPlan,
+  copyDeck: CopyDeck,
+  revisionRequest?: string | null,
+) {
+  const fallback = buildFallbackDecks(bundle, designPlan).designDeck;
+  const client = getOpenAIClient();
+
+  if (!client) {
+    return fallback;
+  }
+
+  try {
+    const designResponse = await client.responses.parse({
+      model: getTextModel(),
+      instructions: designerInstructions(),
+      input: designerInput(bundle, designPlan, copyDeck, revisionRequest),
+      text: {
+        format: zodTextFormat(designDeckSchema, "design_deck"),
+      },
+      max_output_tokens: 2800,
+    });
+
+    return designDeckSchema.parse(designResponse.output_parsed);
+  } catch {
+    return fallback;
+  }
+}
+
+export function assembleCarouselProject(
+  bundle: SourceBundle,
+  designPlan: DesignPlan,
+  copyDeck: CopyDeck,
+  designDeck: DesignDeck,
+) {
+  const fallback = buildFallbackDecks(bundle, designPlan).project;
+  const copyBySlide = new Map(ordered(copyDeck.slides).map((slide) => [slide.slide_number, slide]));
+  const designBySlide = new Map(
+    ordered(designDeck.slides).map((slide) => [slide.slide_number, slide]),
+  );
+
+  return normalizeProject(
+    {
+      brand_label: copyDeck.brand_label,
+      project_title: copyDeck.project_title,
+      audience: "middle_school",
+      language: "ko",
+      theme_name: editorialThemeName,
+      caption: copyDeck.caption,
+      slides: designPlan.slides.map((planSlide) => {
+        const copySlide = copyBySlide.get(planSlide.slide_number);
+        const designSlide = designBySlide.get(planSlide.slide_number);
+        const fallbackSlide = fallback.slides[planSlide.slide_number - 1]!;
+
+        return {
+          slide_number: planSlide.slide_number,
+          role: planSlide.role,
+          visual_tone: planSlide.visual_tone,
+          layout_pattern: planSlide.layout_pattern,
+          narrative_phase: planSlide.narrative_phase,
+          module_weight: planSlide.module_weight,
+          text_density: planSlide.text_density,
+          question_badge: normalizeQuestionBadge(
+            planSlide.slide_number,
+            designPlan.slides.length,
+            designSlide?.question_badge,
+          ),
+          headline: copySlide?.headline ?? fallbackSlide.headline,
+          body: copySlide?.body ?? fallbackSlide.body,
+          emphasis: copySlide?.emphasis ?? fallbackSlide.emphasis,
+          save_point: copySlide?.save_point ?? fallbackSlide.save_point,
+          source_excerpt: copySlide?.source_excerpt ?? fallbackSlide.source_excerpt,
+          module: designSlide?.module ?? fallbackSlide.module,
+        };
+      }),
+    },
+    designPlan,
+  );
+}
+
+export async function buildCarouselProject(
+  bundle: SourceBundle,
+  designPlan: DesignPlan,
+  title?: string | null,
+  revisionRequest?: string | null,
+) {
+  try {
+    const copyDeck = await buildCopyDeck(bundle, designPlan, title, revisionRequest);
+    const designDeck = await buildDesignDeck(bundle, designPlan, copyDeck, revisionRequest);
+    return assembleCarouselProject(bundle, designPlan, copyDeck, designDeck);
+  } catch {
+    return buildFallbackDecks(bundle, designPlan).project;
+  }
+}
+
+async function repairProjectFromQa(
+  bundle: SourceBundle,
+  project: CarouselProject,
+  designPlan: DesignPlan | null,
+  qaReport: QaReport,
+) {
+  const targetSlides = actionableSlideNumbers(qaReport);
+
+  if (targetSlides.length === 0) {
+    return project;
+  }
+
+  const plan = designPlan ?? buildPlanFallback(bundle);
+  const heuristicProject = normalizeProject(
+    {
+      ...project,
+      slides: project.slides.map((slide) => {
+        if (!targetSlides.includes(slide.slide_number)) {
+          return stripStandaloneHtml(slide);
+        }
+
+        return repairSlideHeuristically(
+          slide,
+          bundle,
+          plan.slides.find(
+            (item: DesignPlan["slides"][number]) => item.slide_number === slide.slide_number,
+          ) ?? null,
+        );
+      }),
+    },
+    plan,
+  );
+
+  const client = getOpenAIClient();
+
+  if (!client) {
+    return heuristicProject;
+  }
+
+  try {
+    const response = await client.responses.parse({
+      model: getTextModel(),
+      instructions: `${contentMarketerInstructions()}\n${designerInstructions()}\n${qaRepairInstructions()}\n${getAudienceInstructions("middle_school")}`,
+      input: qaRepairInput(bundle, heuristicProject, designPlan, qaReport, targetSlides),
+      text: {
+        format: zodTextFormat(qaRepairDeckSchema, "qa_repair_deck"),
+      },
+      max_output_tokens: 2200,
+    });
+
+    const repairDeck = qaRepairDeckSchema.parse(response.output_parsed);
+    const repairedBySlide = new Map(repairDeck.repairs.map((slide) => [slide.slide_number, slide]));
+
+    return normalizeProject(
+      {
+        ...heuristicProject,
+        slides: heuristicProject.slides.map((slide) => {
+          const repaired = repairedBySlide.get(slide.slide_number);
+
+          if (!repaired) {
+            return stripStandaloneHtml(slide);
+          }
+
+          return repairSlideHeuristically(
+            {
+              ...slide,
+              question_badge: repaired.question_badge,
+              headline: repaired.headline,
+              body: repaired.body,
+              emphasis: repaired.emphasis,
+              save_point: repaired.save_point,
+              source_excerpt: repaired.source_excerpt,
+              module: repaired.module,
+            },
+            bundle,
+            plan.slides.find(
+              (item: DesignPlan["slides"][number]) => item.slide_number === slide.slide_number,
+            ) ?? null,
+          );
+        }),
+      },
+      plan,
+    );
+  } catch {
+    return heuristicProject;
+  }
+}
+
+export async function qaRepairLoop(
+  bundle: SourceBundle,
+  project: CarouselProject,
+  designPlan: DesignPlan | null,
+  qaReport: QaReport,
+  maxRepairPasses = 2,
+): Promise<QaLoopResult> {
+  const attempts: QaLoopResult["attempts"] = [];
+  let current = project;
+  let currentQaReport = qaReport;
+
+  for (let attempt = 1; attempt <= maxRepairPasses; attempt += 1) {
+    const slideNumbers = actionableSlideNumbers(currentQaReport);
+    const canRepair = hasActionableIssues(currentQaReport) && slideNumbers.length > 0;
+
+    attempts.push({
+      attempt,
+      qa_report: currentQaReport,
+      repaired: canRepair,
+      repaired_slides: canRepair ? slideNumbers : [],
+    });
+
+    if (!canRepair) {
+      return {
+        project: current,
+        qaReport: currentQaReport,
+        attempts,
+      };
+    }
+
+    current = await repairProjectFromQa(bundle, current, designPlan, currentQaReport);
+    currentQaReport = runQa(current, bundle, designPlan);
+  }
+
+  return {
+    project: current,
+    qaReport: currentQaReport,
+    attempts,
+  };
+}
+
+export async function qaReviewAndRepair(
+  bundle: SourceBundle,
+  project: CarouselProject,
+  designPlan: DesignPlan | null,
+  maxRepairPasses = 2,
+): Promise<QaLoopResult> {
+  const qaReport = runQa(project, bundle, designPlan);
+  return qaRepairLoop(bundle, project, designPlan, qaReport, maxRepairPasses);
+}
+
 export async function regenerateSlideFromProject(
   bundle: SourceBundle,
   project: CarouselProject,
+  designPlan: DesignPlan | null,
   slideNumber: number,
 ) {
   const client = getOpenAIClient();
@@ -1056,86 +903,246 @@ export async function regenerateSlideFromProject(
   try {
     const response = await client.responses.parse({
       model: getTextModel(),
-      instructions: `${contentMarketerInstructions()}\n${designerInstructions()}\nReturn only one complete slide.`,
-      input: regenerateInput(bundle, project, slideNumber),
+      instructions: `${contentMarketerInstructions()}\n${designerInstructions()}\nReturn only one repaired slide.`,
+      input: regenerateInput(bundle, project, designPlan, slideNumber),
       text: {
-        format: zodTextFormat(
-          z
-            .object({
-              slide_number: z.number().int().min(1).max(8),
-              role: z.enum(slideRoleValues),
-              question_badge: z.string().min(1).max(32),
-              visual_tone: z.enum(["cover", "light", "dark"]),
-              headline: z.string().min(1).max(120),
-              body: z.string().min(1).max(280),
-              emphasis: z.string().max(60).nullable(),
-              save_point: z.string().max(120).nullable(),
-              source_excerpt: z.string().min(1).max(220),
-              module: slideModuleSchema,
-            })
-            .strict(),
-          "single_slide",
-        ),
+        format: zodTextFormat(repairSlideSchema, "single_slide"),
       },
-      max_output_tokens: 1400,
+      max_output_tokens: 1500,
     });
 
-    const parsed =
-      response.output_parsed as Omit<CarouselProject["slides"][number], "standalone_html">;
+    const repaired = repairSlideSchema.parse(response.output_parsed);
+    const plan = designPlan ?? buildPlanFallback(bundle);
 
-    const next: RawProject = {
-      ...project,
-      slides: project.slides.map((slide) =>
-        slide.slide_number === slideNumber
-          ? { ...parsed, slide_number: slideNumber }
-          : {
-              slide_number: slide.slide_number,
-              role: slide.role,
-              question_badge: slide.question_badge,
-              visual_tone: slide.visual_tone,
-              headline: slide.headline,
-              body: slide.body,
-              emphasis: slide.emphasis,
-              save_point: slide.save_point,
-              source_excerpt: slide.source_excerpt,
-              module: slide.module,
+    return normalizeProject(
+      {
+        ...project,
+        slides: project.slides.map((slide) => {
+          if (slide.slide_number !== slideNumber) {
+            return stripStandaloneHtml(slide);
+          }
+
+          return repairSlideHeuristically(
+            {
+              ...slide,
+              question_badge: repaired.question_badge,
+              headline: repaired.headline,
+              body: repaired.body,
+              emphasis: repaired.emphasis,
+              save_point: repaired.save_point,
+              source_excerpt: repaired.source_excerpt,
+              module: repaired.module,
             },
-      ),
-    };
-
-    return normalizeProject(next);
+            bundle,
+            plan.slides.find(
+              (item: DesignPlan["slides"][number]) => item.slide_number === slideNumber,
+            ) ?? null,
+          );
+        }),
+      },
+      plan,
+    );
   } catch {
     return project;
   }
 }
 
-export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport {
-  const issues: QaReport["issues"] = [];
+function buildQaReport(
+  issues: QaReport["issues"],
+  checksPassed: string[],
+): QaReport {
+  return qaReportSchema.parse({
+    high_count: issues.filter((issue) => issue.severity === "high").length,
+    medium_count: issues.filter((issue) => issue.severity === "medium").length,
+    low_count: issues.filter((issue) => issue.severity === "low").length,
+    checks_passed: checksPassed,
+    issues: issues.slice(0, 12),
+  });
+}
 
-  for (const slide of project.slides) {
-    if (
-      (slide.role === "core" && slide.module.type !== "checklist-table") ||
-      (slide.role === "why" && slide.module.type !== "before-after") ||
-      (slide.role === "example" && slide.module.type !== "timeline") ||
-      (slide.role === "compare" &&
-        !["three-card-summary", "before-after"].includes(slide.module.type)) ||
-      (slide.role === "number_or_steps" &&
-        !["number-spotlight", "code-window", "checklist-table"].includes(slide.module.type)) ||
-      (slide.role === "recap" &&
-        !["message-banner", "three-card-summary"].includes(slide.module.type))
-    ) {
+export function runDeterministicQaValidator(
+  project: CarouselProject,
+  bundle: SourceBundle,
+  designPlan: DesignPlan | null,
+): QaReport {
+  const issues: QaReport["issues"] = [];
+  const planSlides = designPlan?.slides ?? [];
+
+  for (let index = 0; index < project.slides.length; index += 1) {
+    const slide = project.slides[index]!;
+    const planSlide = planSlides[index] ?? null;
+    const allowedPatterns = getAllowedPatternsForRole(slide.role);
+    const isMiddle = slide.visual_tone === "light";
+
+    if (!allowedPatterns.includes(slide.layout_pattern)) {
       issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드의 하단 모듈이 현재 역할과 잘 안 맞아요.`,
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: invalid layout pattern for role ${slide.role}.`,
       });
     }
+
+    if (slide.module.type !== patternModuleTypeMap[slide.layout_pattern]) {
+      issues.push({
+        severity: "medium",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: module type does not match layout pattern.`,
+      });
+    }
+
+    if (planSlide && slide.layout_pattern !== planSlide.layout_pattern) {
+      issues.push({
+        severity: "medium",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: layout drifted away from the design plan.`,
+      });
+    }
+
+    if (planSlide) {
+      issues.push(
+        ...collectPlanMetadataValidatorIssues(slide, planSlide),
+      );
+    }
+
+    if (slide.slide_number === 1) {
+      if (slide.layout_pattern !== "cover-hero" || slide.visual_tone !== "cover") {
+        issues.push({
+          severity: "high",
+          stage: "qa-validator",
+          message: "Slide 1: cover must use cover-hero and cover tone.",
+        });
+      }
+    } else if (slide.slide_number === project.slides.length) {
+      if (slide.layout_pattern !== "closing-statement" || slide.visual_tone !== "dark") {
+        issues.push({
+          severity: "high",
+          stage: "qa-validator",
+          message: `Slide ${slide.slide_number}: closing must use closing-statement and dark tone.`,
+        });
+      }
+    } else if (slide.visual_tone !== "light") {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: middle slides must use the light editorial tone.`,
+      });
+    }
+
+    if (index > 0 && project.slides[index - 1]!.layout_pattern === slide.layout_pattern) {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: repeated layout pattern on consecutive slides.`,
+      });
+    }
+
+    if (index > 1) {
+      const temperatures = [
+        project.slides[index - 2]!.narrative_phase,
+        project.slides[index - 1]!.narrative_phase,
+        slide.narrative_phase,
+      ].map(getNarrativeTemperature);
+
+      if (
+        temperatures[0] === temperatures[1] &&
+        temperatures[1] === temperatures[2]
+      ) {
+        issues.push({
+          severity: "high",
+          stage: "qa-validator",
+          message: `Slide ${slide.slide_number}: emotional temperature repeated three times.`,
+        });
+      }
+    }
+
+    if (isMiddle && slide.module_weight === "light") {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: lower module is too weak for the editorial layout.`,
+      });
+    }
+
+    if (hasDenseTimeline(slide)) {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: timeline is too dense or asymmetrical.`,
+      });
+    }
+
+    if (hasWeakSpotlight(slide)) {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: weak-number spotlight patterns are not allowed.`,
+      });
+    }
+
+    if (slide.visual_tone === "light" && !slide.standalone_html.includes('class="page-counter"')) {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: middle slide is missing the page counter.`,
+      });
+    }
+
+    if (!slide.standalone_html.includes("overflow:hidden")) {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: standalone HTML must keep overflow hidden.`,
+      });
+    }
+
+    const slideWithoutHtml = stripStandaloneHtml(slide);
+    const expectedStandaloneHtml = renderStandaloneSlideHtml(
+      slideWithoutHtml,
+      project.slides.length,
+      project.project_title,
+    );
+
+    if (slide.standalone_html !== expectedStandaloneHtml) {
+      issues.push({
+        severity: "high",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: standalone renderer drifted from the slide data.`,
+      });
+    }
+
+    if (usesDirectColorLiteralsOutsideTokens(slide.standalone_html)) {
+      issues.push({
+        severity: "medium",
+        stage: "qa-validator",
+        message: `Slide ${slide.slide_number}: direct color literals found outside design tokens.`,
+      });
+    }
+  }
+
+  return buildQaReport(issues, [
+    "design-plan metadata matches the generated slides",
+    "editorial structure, rhythm, and layout rules validated",
+    "standalone renderer output matches slide data and token contract",
+  ]);
+}
+
+export function runQaReviewer(
+  project: CarouselProject,
+  bundle: SourceBundle,
+  designPlan: DesignPlan | null,
+  validatorReport: QaReport,
+): QaReport {
+  void designPlan;
+  const issues = [...validatorReport.issues];
+
+  for (const slide of project.slides) {
+    const isMiddle = slide.visual_tone === "light";
 
     if (slide.headline.length > 110) {
       issues.push({
         severity: "medium",
         stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 제목이 조금 길어요.`,
+        message: `Slide ${slide.slide_number}: headline is too long.`,
       });
     }
 
@@ -1143,42 +1150,7 @@ export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport 
       issues.push({
         severity: "medium",
         stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 본문이 길어서 화면이 답답해질 수 있어요.`,
-      });
-    }
-
-    if (slide.slide_number === 8 && slide.body.length > 170) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: "마지막 슬라이드 본문이 길어서 결론이 흐려질 수 있어요.",
-      });
-    }
-
-    if (slide.slide_number === 8 && !/마지막/u.test(slide.question_badge)) {
-      issues.push({
-        severity: "low",
-        stage: "qa-reviewer",
-        message: "마지막 슬라이드 배지가 마무리 느낌을 더 분명히 보여주면 좋아요.",
-      });
-    }
-
-    if (
-      slide.module.type === "number-spotlight" &&
-      /^(number|숫자|수치)$/iu.test(slide.module.items[0]?.label ?? "")
-    ) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 숫자 카드는 숫자가 무엇을 뜻하는지 라벨이 더 필요해요.`,
-      });
-    }
-
-    if (hasWeakNumberSpotlight(slide)) {
-      issues.push({
-        severity: "high",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 숫자 spotlight가 약해서 한 박스 과장이 생겼어요.`,
+        message: `Slide ${slide.slide_number}: body copy is too long for mobile reading.`,
       });
     }
 
@@ -1186,56 +1158,23 @@ export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport 
       issues.push({
         severity: "low",
         stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드의 원문 근거 문장을 다시 확인해 주세요.`,
+        message: `Slide ${slide.slide_number}: source excerpt needs a grounded match.`,
       });
     }
 
-    if (
-      /(이\s+소스는|소스는|소스에\s+따르면|소스에\s+의하면|원문은|자료는|이\s+글은)/u.test(
-        `${slide.headline} ${slide.body} ${slide.emphasis ?? ""} ${slide.save_point ?? ""}`,
-      )
-    ) {
+    if (isMiddle && isVisuallyThin(slide)) {
       issues.push({
         severity: "medium",
         stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드에 독자에게 불필요한 출처 말버릇이 남아 있어요.`,
+        message: `Slide ${slide.slide_number}: upper copy or lower module feels too empty.`,
       });
     }
 
-    const moduleText = [
-      slide.module.title,
-      slide.module.subtitle,
-      slide.module.footer,
-      ...slide.module.items.flatMap((item) => [
-        item.label,
-        item.title,
-        item.value,
-        item.note,
-      ]),
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-    if (looksLikeMetaInstruction(moduleText)) {
-      issues.push({
-        severity: "high",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드에 독자용이 아닌 제작 메모가 들어 있어요.`,
-      });
-    }
-
-    if (slide.module.items.length === 0) {
-      issues.push({
-        severity: "high",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 하단 모듈이 비어 있어요.`,
-      });
-    }
     if (hasDenseChecklist(slide)) {
       issues.push({
         severity: "medium",
         stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 체크리스트 표가 길어서 잘릴 위험이 있어요.`,
+        message: `Slide ${slide.slide_number}: checklist hierarchy is too dense.`,
       });
     }
 
@@ -1243,73 +1182,23 @@ export function runQa(project: CarouselProject, bundle: SourceBundle): QaReport 
       issues.push({
         severity: "medium",
         stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 표에 숫자 라벨이 중복되어 위계가 약해 보여요.`,
-      });
-    }
-
-    if (hasDenseTimeline(slide)) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 타임라인 문구가 길어서 중앙 정렬이 무너질 수 있어요.`,
-      });
-    }
-
-    if (hasTimelineAlignmentRisk(slide)) {
-      issues.push({
-        severity: "high",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 타임라인 정렬이 비대칭으로 보일 위험이 있어요.`,
-      });
-    }
-
-    if (hasDenseCodeWindow(slide)) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 다크 패널이 과밀해서 아래 safe area가 부족해질 수 있어요.`,
-      });
-    }
-
-    if (hasDenseCardModule(slide)) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드 하단 카드 정보량이 많아 카드 내부 줄바꿈이 어색할 수 있어요.`,
-      });
-    }
-
-    if (isVisuallyThin(slide)) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드가 비어 보여서 하단 모듈을 더 밀도 있게 다듬는 편이 좋아요.`,
-      });
-    }
-
-    if (isVisuallyCrowded(slide)) {
-      issues.push({
-        severity: "medium",
-        stage: "qa-reviewer",
-        message: `${slide.slide_number}번 슬라이드가 과밀해서 문장이나 모듈을 압축해야 해요.`,
+        message: `Slide ${slide.slide_number}: checklist labels need stronger hierarchy than numbers alone.`,
       });
     }
   }
 
-  const limitedIssues = issues.slice(0, 12);
+  return buildQaReport(issues, [
+      "1080x1350 standalone HTML generated",
+      "deterministic validator report reviewed before repair",
+      "copy readability and grounded explanation checked",
+    ]);
+}
 
-  return qaReportSchema.parse({
-    high_count: issues.filter((issue) => issue.severity === "high").length,
-    medium_count: issues.filter((issue) => issue.severity === "medium").length,
-    low_count: issues.filter((issue) => issue.severity === "low").length,
-    checks_passed: [
-      "슬라이드 수 8장 확인",
-      "1080x1350 standalone HTML 생성",
-      "모든 슬라이드 하단 모듈 존재",
-      "질문형 카드뉴스 구조 유지",
-      "원문 기반 source excerpt 포함",
-      "마지막 슬라이드 결론과 CTA 분리 검사",
-    ],
-    issues: limitedIssues,
-  });
+export function runQa(
+  project: CarouselProject,
+  bundle: SourceBundle,
+  designPlan: DesignPlan | null,
+): QaReport {
+  const validatorReport = runDeterministicQaValidator(project, bundle, designPlan);
+  return runQaReviewer(project, bundle, designPlan, validatorReport);
 }
